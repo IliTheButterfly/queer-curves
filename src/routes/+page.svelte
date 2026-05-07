@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { fixtures, type Graph } from '$lib';
+	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 
-	const graphs: Graph[] = fixtures.allFixtures;
+	const aceflux = fixtures.acefluxFixture;
+	const others: Graph[] = fixtures.allFixtures.filter((g) => g.id !== aceflux.id);
 
 	function summarize(g: Graph): string {
 		if (g.type === 'spectrum') {
@@ -18,21 +20,24 @@
 
 <main>
 	<h1>queer-curves</h1>
-	<p>
-		Privacy-respecting graphs for tracking and sharing identity over time.
-	</p>
+	<p>Privacy-respecting graphs for tracking and sharing identity over time.</p>
 	<p>
 		Pre-development. See the design docs in the repository:
 		<code>data_model.md</code>, <code>sharing_model.md</code>,
 		<code>THREATS.md</code>, <code>STACK.md</code>.
 	</p>
 
-	<h2>Canonical fixtures</h2>
+	<h2>{aceflux.name}</h2>
 	<p class="muted">
-		The data model's test cases — see <code>data_model.md</code> §11.
+		Aceflux 1D spectrum — {aceflux.datapoints.length} datapoints over time.
 	</p>
+	<div class="chart">
+		<SpectrumHistoryChart graph={aceflux} />
+	</div>
+
+	<h2>Other fixtures</h2>
 	<ul>
-		{#each graphs as graph (graph.id)}
+		{#each others as graph (graph.id)}
 			<li>
 				<strong>{graph.name}</strong>
 				<span class="muted">— {summarize(graph)}</span>
@@ -55,5 +60,14 @@
 	}
 	.muted {
 		color: var(--color-muted);
+	}
+	.chart {
+		margin-top: var(--space-3);
+		padding: var(--space-3);
+		background: rgba(255, 255, 255, 0.03);
+		border-radius: 4px;
+	}
+	main {
+		max-width: 80ch;
 	}
 </style>
