@@ -1,6 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
 	import SpectrumDatapointForm from '$lib/ui/SpectrumDatapointForm.svelte';
@@ -23,83 +22,73 @@
 
 	let { data }: { data: PageData } = $props();
 
-	// Local mutable copy. Re-seeded whenever SvelteKit's loader hands us a
-	// new `data.graph` — i.e. on every navigation/invalidation, including
-	// returning from /graphs/[id]/edit to the same id. In-page mutations
-	// only change `graph` (not `data.graph`), so this effect doesn't fire
-	// on those and local edits aren't clobbered.
-	let graph = $state<Graph>(untrack(() => data.graph));
-	$effect(() => {
-		graph = data.graph;
-	});
-
+	// `data.graph` is the single source of truth. Mutations save to localStorage
+	// and call invalidateAll() so SvelteKit re-runs the loader and re-reads
+	// fresh data — no separate local mutable copy to keep in sync.
+	const graph = $derived(data.graph);
 	const isUserGraph = $derived(data.isUserGraph);
 
-	function persist(updated: Graph) {
-		graph = updated;
-		if (isUserGraph) saveUserGraph(updated);
+	async function persist(updated: Graph) {
+		if (isUserGraph) {
+			saveUserGraph(updated);
+			await invalidateAll();
+		}
 	}
 
-	function handleAddDatapoint(dp: SpectrumDatapoint) {
+	async function handleAddDatapoint(dp: SpectrumDatapoint) {
 		if (graph.type !== 'spectrum') return;
-		const updated: SpectrumGraph = {
+		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
 			datapoints: [...graph.datapoints, dp]
-		};
-		persist(updated);
+		} satisfies SpectrumGraph);
 	}
 
-	function handleAddNode(node: NetworkNode) {
+	async function handleAddNode(node: NetworkNode) {
 		if (graph.type !== 'network') return;
-		const updated: NetworkGraph = {
+		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
 			nodes: [...graph.nodes, node]
-		};
-		persist(updated);
+		} satisfies NetworkGraph);
 	}
 
-	function handleAddEdge(edge: NetworkEdge) {
+	async function handleAddEdge(edge: NetworkEdge) {
 		if (graph.type !== 'network') return;
-		const updated: NetworkGraph = {
+		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
 			edges: [...graph.edges, edge]
-		};
-		persist(updated);
+		} satisfies NetworkGraph);
 	}
 
-	function handleRemoveDatapoint(id: string) {
+	async function handleRemoveDatapoint(id: string) {
 		if (graph.type !== 'spectrum') return;
-		const updated: SpectrumGraph = {
+		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
 			datapoints: graph.datapoints.filter((dp) => dp.id !== id)
-		};
-		persist(updated);
+		} satisfies SpectrumGraph);
 	}
 
-	function handleRemoveNode(id: string) {
+	async function handleRemoveNode(id: string) {
 		if (graph.type !== 'network') return;
 		// Cascade: removing a person also removes all their connections.
-		const updated: NetworkGraph = {
+		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
 			nodes: graph.nodes.filter((n) => n.id !== id),
 			edges: graph.edges.filter((e) => e.source !== id && e.target !== id)
-		};
-		persist(updated);
+		} satisfies NetworkGraph);
 	}
 
-	function handleRemoveEdge(id: string) {
+	async function handleRemoveEdge(id: string) {
 		if (graph.type !== 'network') return;
-		const updated: NetworkGraph = {
+		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
 			edges: graph.edges.filter((e) => e.id !== id)
-		};
-		persist(updated);
+		} satisfies NetworkGraph);
 	}
 
 	async function handleDelete() {

@@ -1,5 +1,16 @@
 <script lang="ts">
 	import type { Axis, Region } from '$lib/types.js';
+	import RegionPicker from './RegionPicker.svelte';
+
+	function summarize(r: Region): string {
+		if (r.shape.type === 'range') {
+			return `[${r.shape.min.toFixed(2)} → ${r.shape.max.toFixed(2)}]`;
+		}
+		if (r.shape.type === 'box') {
+			return `[${r.shape.min[0].toFixed(2)}, ${r.shape.min[1].toFixed(2)}] → [${r.shape.max[0].toFixed(2)}, ${r.shape.max[1].toFixed(2)}]`;
+		}
+		return `${r.shape.vertices.length} vertices`;
+	}
 
 	let {
 		regions = $bindable(),
@@ -111,100 +122,54 @@
 	{:else}
 		{#each regions as region, i (region.id)}
 			<div class="region-row">
-				<input
-					type="text"
-					bind:value={region.label}
-					placeholder="label"
-					maxlength="60"
-					class="region-label"
-				/>
-
-				{#if region.shape.type === 'range'}
-					<div class="bounds">
-						<label class="num-pair">
-							<span class="muted">min</span>
-							<input type="number" step="0.01" bind:value={region.shape.min} class="num" />
-						</label>
-						<label class="num-pair">
-							<span class="muted">max</span>
-							<input type="number" step="0.01" bind:value={region.shape.max} class="num" />
-						</label>
-					</div>
-				{:else if region.shape.type === 'box'}
-					<div class="bounds-2d">
-						{#each axes as ax, axIdx (axIdx)}
-							<div class="axis-bounds">
-								<span class="axis-tag">{ax.name}</span>
-								<label class="num-pair">
-									<span class="muted">min</span>
-									<input
-										type="number"
-										step="0.01"
-										bind:value={region.shape.min[axIdx]}
-										class="num"
-									/>
-								</label>
-								<label class="num-pair">
-									<span class="muted">max</span>
-									<input
-										type="number"
-										step="0.01"
-										bind:value={region.shape.max[axIdx]}
-										class="num"
-									/>
-								</label>
-							</div>
-						{/each}
-					</div>
-				{:else if region.shape.type === 'polygon'}
-					<div class="polygon-vertices">
-						<div class="polygon-header">
-							<span class="muted">{region.shape.vertices.length} vertices</span>
-							<button type="button" class="ghost-tiny" onclick={() => addVertex(i)}>
-								+ vertex
+				<div class="meta-line">
+					<input
+						type="text"
+						bind:value={region.label}
+						placeholder="label"
+						maxlength="60"
+						class="region-label"
+					/>
+					<input
+						type="color"
+						bind:value={region.color}
+						class="color-picker"
+						aria-label="region colour"
+					/>
+					{#if region.shape.type === 'polygon'}
+						{@const poly = region.shape}
+						<button
+							type="button"
+							class="ghost-tiny"
+							onclick={() => addVertex(i)}
+							title="add a new vertex (drag it after)"
+						>
+							+ vertex
+						</button>
+						{#if poly.vertices.length > 3}
+							<button
+								type="button"
+								class="ghost-tiny remove"
+								onclick={() => removeVertex(i, poly.vertices.length - 1)}
+								title="remove the last vertex"
+							>
+								− vertex
 							</button>
-						</div>
-						{#each region.shape.vertices as vertex, vIdx (vIdx)}
-							<div class="vertex-row">
-								<span class="muted">v{vIdx + 1}</span>
-								<input
-									type="number"
-									step="0.01"
-									bind:value={vertex[0]}
-									class="num"
-									aria-label="{axes[0]?.name ?? 'x'} of vertex {vIdx + 1}"
-								/>
-								<input
-									type="number"
-									step="0.01"
-									bind:value={vertex[1]}
-									class="num"
-									aria-label="{axes[1]?.name ?? 'y'} of vertex {vIdx + 1}"
-								/>
-								{#if region.shape.vertices.length > 3}
-									<button
-										type="button"
-										class="ghost-tiny remove"
-										onclick={() => removeVertex(i, vIdx)}
-										aria-label="remove vertex"
-									>
-										×
-									</button>
-								{/if}
-							</div>
-						{/each}
-					</div>
-				{/if}
-
-				<input type="color" bind:value={region.color} class="color-picker" />
-				<button
-					type="button"
-					class="ghost remove"
-					onclick={() => removeRegion(i)}
-					aria-label="remove region"
-				>
-					×
-				</button>
+						{/if}
+					{/if}
+					<button
+						type="button"
+						class="ghost remove"
+						onclick={() => removeRegion(i)}
+						aria-label="remove region"
+					>
+						×
+					</button>
+				</div>
+				<div class="picker-wrap">
+					<RegionPicker bind:region={regions[i]} {axes} />
+				</div>
+				<p class="readout muted">{summarize(region)}</p>
 			</div>
 		{/each}
 	{/if}
@@ -237,36 +202,35 @@
 	}
 
 	.region-row {
-		display: grid;
-		grid-template-columns: 1fr auto 60px auto;
-		gap: var(--space-3);
-		align-items: start;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
 		padding: var(--space-2);
 		background: rgba(255, 255, 255, 0.02);
 		border: 1px solid rgba(255, 255, 255, 0.06);
 		border-radius: 4px;
 	}
+	.meta-line {
+		display: flex;
+		gap: var(--space-2);
+		align-items: center;
+	}
+	.region-label {
+		flex: 1;
+	}
+	.picker-wrap {
+		padding: var(--space-2);
+		background: rgba(0, 0, 0, 0.2);
+		border-radius: 4px;
+	}
+	.readout {
+		margin: 0;
+		font-family: var(--font-mono);
+		font-size: 0.8em;
+	}
 	.header-actions {
 		display: inline-flex;
 		gap: var(--space-2);
-	}
-	.polygon-vertices {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-1);
-		font-size: 0.85em;
-	}
-	.polygon-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: var(--space-1);
-	}
-	.vertex-row {
-		display: grid;
-		grid-template-columns: auto 70px 70px auto;
-		gap: var(--space-1);
-		align-items: center;
 	}
 	button.ghost-tiny {
 		background: transparent;
@@ -290,8 +254,7 @@
 		background: rgba(255, 100, 100, 0.1);
 		border-color: rgba(255, 100, 100, 0.5);
 	}
-	.region-label,
-	.num {
+	.region-label {
 		background: rgba(0, 0, 0, 0.25);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		color: var(--color-fg);
@@ -299,40 +262,9 @@
 		border-radius: 4px;
 		font: inherit;
 	}
-	.region-label:focus,
-	.num:focus {
+	.region-label:focus {
 		outline: none;
 		border-color: var(--color-accent);
-	}
-	.num {
-		width: 70px;
-	}
-
-	.bounds {
-		display: flex;
-		gap: var(--space-2);
-		align-items: center;
-	}
-	.bounds-2d {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-1);
-		font-size: 0.85em;
-	}
-	.axis-bounds {
-		display: flex;
-		gap: var(--space-2);
-		align-items: center;
-	}
-	.axis-tag {
-		color: var(--color-muted);
-		min-width: 60px;
-	}
-	.num-pair {
-		display: inline-flex;
-		gap: var(--space-1);
-		align-items: center;
-		font-size: 0.85em;
 	}
 	.muted {
 		color: var(--color-muted);
