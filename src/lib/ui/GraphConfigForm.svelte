@@ -178,7 +178,7 @@
 			const validRegions = regions.filter((r) => {
 				if (r.label.trim() === '') return false;
 				if (dimensions === 1) return r.shape.type === 'range';
-				if (dimensions === 2) return r.shape.type === 'box';
+				if (dimensions === 2) return r.shape.type === 'box' || r.shape.type === 'polygon';
 				return false;
 			});
 
