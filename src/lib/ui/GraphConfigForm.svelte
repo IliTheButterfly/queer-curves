@@ -11,6 +11,7 @@
 	} from '$lib/types.js';
 	import { palettes, type Palette } from '$lib/presets/palettes.js';
 	import { generateGraphId } from '$lib/store/graphs.js';
+	import ColorPickerWithPalette from '$lib/ui/ColorPickerWithPalette.svelte';
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
 	import RegionEditor from '$lib/ui/RegionEditor.svelte';
 
@@ -392,15 +393,14 @@
 				What kinds of connections can exist between people. You can collapse them into a single
 				"connected" type for redacted views later.
 			</p>
-			<datalist id="edge-type-palette">
-				{#each selectedPalette.colors as c (c)}
-					<option value={c}></option>
-				{/each}
-			</datalist>
 			{#each edgeTypes as et, i (et.id)}
 				<div class="edge-row">
 					<input type="text" bind:value={et.label} placeholder="romantic" />
-					<input type="color" bind:value={et.color} class="color" list="edge-type-palette" />
+					<ColorPickerWithPalette
+						bind:value={edgeTypes[i].color}
+						paletteColors={selectedPalette.colors}
+						ariaLabel="edge type colour"
+					/>
 					{#if edgeTypes.length > 1}
 						<button
 							type="button"
@@ -572,7 +572,7 @@
 
 	.edge-row {
 		display: grid;
-		grid-template-columns: 1fr 60px auto;
+		grid-template-columns: 1fr auto auto;
 		gap: var(--space-2);
 		align-items: center;
 	}
@@ -583,13 +583,6 @@
 		padding: var(--space-2);
 		border-radius: 4px;
 		font: inherit;
-	}
-	.edge-row input.color {
-		height: 38px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 4px;
-		background: transparent;
-		cursor: pointer;
 	}
 
 	.hint {

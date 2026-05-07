@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Axis, Region } from '$lib/types.js';
+	import ColorPickerWithPalette from './ColorPickerWithPalette.svelte';
 	import RegionPicker from './RegionPicker.svelte';
 
 	function summarize(r: Region): string {
@@ -23,10 +24,6 @@
 		defaultColor?: string;
 		paletteColors?: string[];
 	} = $props();
-
-	// Unique-ish id so multiple RegionEditors on a page don't collide on
-	// the same <datalist>.
-	const datalistId = `region-palette-${Math.random().toString(36).slice(2, 8)}`;
 
 	const dimensions = $derived(axes.length);
 
@@ -127,14 +124,6 @@
 		Labelled bands, boxes, or polygons — e.g. "sex feels attractive within this range".
 	</p>
 
-	{#if paletteColors.length > 0}
-		<datalist id={datalistId}>
-			{#each paletteColors as c (c)}
-				<option value={c}></option>
-			{/each}
-		</datalist>
-	{/if}
-
 	{#if regions.length === 0}
 		<p class="empty">No regions yet.</p>
 	{:else}
@@ -148,12 +137,10 @@
 						maxlength="60"
 						class="region-label"
 					/>
-					<input
-						type="color"
-						bind:value={region.color}
-						class="color-picker"
-						list={datalistId}
-						aria-label="region colour"
+					<ColorPickerWithPalette
+						bind:value={regions[i].color}
+						{paletteColors}
+						ariaLabel="region colour"
 					/>
 					{#if region.shape.type === 'polygon'}
 						{@const poly = region.shape}
@@ -233,6 +220,7 @@
 		display: flex;
 		gap: var(--space-2);
 		align-items: center;
+		flex-wrap: wrap;
 	}
 	.region-label {
 		flex: 1;
@@ -287,16 +275,6 @@
 	}
 	.muted {
 		color: var(--color-muted);
-	}
-
-	.color-picker {
-		width: 60px;
-		height: 32px;
-		padding: 0;
-		background: transparent;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 4px;
-		cursor: pointer;
 	}
 
 	button.ghost {

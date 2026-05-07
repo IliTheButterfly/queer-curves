@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { NetworkGraph, NetworkNode } from '$lib/types.js';
+	import ColorPickerWithPalette from './ColorPickerWithPalette.svelte';
 
 	let { graph, onsubmit }: { graph: NetworkGraph; onsubmit: (node: NetworkNode) => void } =
 		$props();
@@ -8,7 +9,6 @@
 	let color = $state('');
 
 	const paletteColors = $derived(graph.customization.theme.palette);
-	const datalistId = `node-palette-${Math.random().toString(36).slice(2, 8)}`;
 
 	function generateId(existing: NetworkNode[]): string {
 		// Find the smallest unused n_X id.
@@ -40,18 +40,11 @@
 			<span class="label">Name</span>
 			<input type="text" bind:value={label} required placeholder="Alex" maxlength="60" />
 		</label>
-		<label class="field colorfield">
+		<div class="field colorfield">
 			<span class="label">Colour <small>(optional)</small></span>
-			<input type="color" bind:value={color} list={datalistId} />
-		</label>
+			<ColorPickerWithPalette bind:value={color} {paletteColors} ariaLabel="person colour" />
+		</div>
 	</div>
-	{#if paletteColors.length > 0}
-		<datalist id={datalistId}>
-			{#each paletteColors as c (c)}
-				<option value={c}></option>
-			{/each}
-		</datalist>
-	{/if}
 	<button type="submit" class="primary">+ add person</button>
 </form>
 
@@ -96,15 +89,6 @@
 	.field input[type='text']:focus {
 		outline: none;
 		border-color: var(--color-accent);
-	}
-	.colorfield input[type='color'] {
-		width: 60px;
-		height: 38px;
-		padding: 0;
-		background: transparent;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 4px;
-		cursor: pointer;
 	}
 	button.primary {
 		align-self: flex-start;
