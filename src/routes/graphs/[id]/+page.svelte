@@ -23,13 +23,14 @@
 
 	let { data }: { data: PageData } = $props();
 
-	// Local mutable copy. Re-seeded when navigating to a different graph,
-	// preserved across in-page edits.
+	// Local mutable copy. Re-seeded whenever SvelteKit's loader hands us a
+	// new `data.graph` — i.e. on every navigation/invalidation, including
+	// returning from /graphs/[id]/edit to the same id. In-page mutations
+	// only change `graph` (not `data.graph`), so this effect doesn't fire
+	// on those and local edits aren't clobbered.
 	let graph = $state<Graph>(untrack(() => data.graph));
 	$effect(() => {
-		if (data.graph.id !== graph.id) {
-			graph = data.graph;
-		}
+		graph = data.graph;
 	});
 
 	const isUserGraph = $derived(data.isUserGraph);
