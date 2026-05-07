@@ -3,7 +3,10 @@
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 
 	const aceflux = fixtures.acefluxFixture;
-	const others: Graph[] = fixtures.allFixtures.filter((g) => g.id !== aceflux.id);
+	const genderfluid = fixtures.genderfluidFixture;
+	const others: Graph[] = fixtures.allFixtures.filter(
+		(g) => g.id !== aceflux.id && g.id !== genderfluid.id
+	);
 
 	function summarize(g: Graph): string {
 		if (g.type === 'spectrum') {
@@ -33,6 +36,14 @@
 	</p>
 	<div class="chart">
 		<SpectrumHistoryChart graph={aceflux} />
+	</div>
+
+	<h2>{genderfluid.name}</h2>
+	<p class="muted">
+		Genderfluid 2D spectrum — trajectory cloud through identity-space.
+	</p>
+	<div class="chart">
+		<SpectrumHistoryChart graph={genderfluid} />
 	</div>
 
 	<h2>Other fixtures</h2>
