@@ -10,6 +10,7 @@
 	import NetworkEdgeForm from '$lib/ui/NetworkEdgeForm.svelte';
 	import NetworkEdgeList from '$lib/ui/NetworkEdgeList.svelte';
 	import { deleteUserGraph, saveUserGraph } from '$lib/store/graphs.js';
+	import { downloadGraphAsJson } from '$lib/store/io.js';
 	import type {
 		Graph,
 		NetworkEdge,
@@ -115,12 +116,15 @@
 	<p class="back"><a href="/">← all graphs</a></p>
 	<div class="header-row">
 		<h1>{graph.name}</h1>
-		{#if isUserGraph}
-			<div class="header-actions">
+		<div class="header-actions">
+			<button type="button" class="ghost-link" onclick={() => downloadGraphAsJson(graph)}>
+				Export
+			</button>
+			{#if isUserGraph}
 				<a class="ghost-link" href="/graphs/{graph.id}/edit">Edit</a>
 				<button type="button" class="danger-ghost" onclick={handleDelete}>Delete</button>
-			</div>
-		{/if}
+			{/if}
+		</div>
 	</div>
 	{#if graph.description}
 		<p class="muted">{graph.description}</p>
@@ -222,6 +226,7 @@
 		border-radius: 4px;
 		font: inherit;
 		text-decoration: none;
+		cursor: pointer;
 	}
 	.ghost-link:hover {
 		background: rgba(255, 255, 255, 0.05);

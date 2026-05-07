@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { fixtures, type Graph } from '$lib';
 	import { palettes } from '$lib/presets/palettes.js';
 	import { listUserGraphs } from '$lib/store/graphs.js';
+	import { importGraphFromFile } from '$lib/store/io.js';
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
 
 	const fixtureGraphs: Graph[] = fixtures.allFixtures;
 	let userGraphs = $state<Graph[]>([]);
+	let importInput: HTMLInputElement;
+	let importError = $state<string | null>(null);
 
 	const featuredPalettes = palettes
 		.filter((p) => ['pride', 'progress', 'trans', 'bi', 'lesbian', 'nb'].includes(p.id))
@@ -15,6 +19,19 @@
 	onMount(() => {
 		userGraphs = listUserGraphs();
 	});
+
+	async function handleImport() {
+		importError = null;
+		const file = importInput.files?.[0];
+		if (!file) return;
+		try {
+			const graph = await importGraphFromFile(file);
+			await goto(`/graphs/${graph.id}`);
+		} catch (e) {
+			importError = e instanceof Error ? e.message : 'Failed to import.';
+			importInput.value = '';
+		}
+	}
 
 	function summarize(g: Graph): string {
 		if (g.type === 'spectrum') {
@@ -40,8 +57,23 @@
 
 	<h2>
 		Your graphs
-		<a class="cta" href="/graphs/new">+ new graph</a>
+		<span class="cta-group">
+			<button type="button" class="cta secondary" onclick={() => importInput.click()}>
+				Import
+			</button>
+			<a class="cta" href="/graphs/new">+ new graph</a>
+		</span>
 	</h2>
+	<input
+		type="file"
+		accept="application/json,.json"
+		bind:this={importInput}
+		onchange={handleImport}
+		hidden
+	/>
+	{#if importError}
+		<p class="error">Import failed: {importError}</p>
+	{/if}
 	{#if userGraphs.length === 0}
 		<p class="muted">
 			No graphs yet. Create one — it's stored locally on this device for now; Matrix-backed sharing
@@ -112,9 +144,34 @@
 		background: rgba(201, 138, 255, 0.15);
 		border-radius: 4px;
 		color: var(--color-accent);
+		border: none;
+		font: inherit;
+		cursor: pointer;
 	}
 	.cta:hover {
 		background: rgba(201, 138, 255, 0.25);
+	}
+	.cta.secondary {
+		background: transparent;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: var(--color-fg);
+	}
+	.cta.secondary:hover {
+		background: rgba(255, 255, 255, 0.05);
+		border-color: var(--color-accent);
+	}
+	.cta-group {
+		display: inline-flex;
+		gap: var(--space-2);
+	}
+	.error {
+		padding: var(--space-2) var(--space-3);
+		background: rgba(255, 100, 100, 0.1);
+		border: 1px solid rgba(255, 100, 100, 0.3);
+		color: rgba(255, 180, 180, 1);
+		border-radius: 4px;
+		font-size: 0.9em;
+		margin-top: var(--space-2);
 	}
 	.see-all:hover {
 		color: var(--color-accent);
