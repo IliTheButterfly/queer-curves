@@ -15,8 +15,18 @@
 	let {
 		regions = $bindable(),
 		axes,
-		defaultColor = '#c98aff'
-	}: { regions: Region[]; axes: Axis[]; defaultColor?: string } = $props();
+		defaultColor = '#c98aff',
+		paletteColors = []
+	}: {
+		regions: Region[];
+		axes: Axis[];
+		defaultColor?: string;
+		paletteColors?: string[];
+	} = $props();
+
+	// Unique-ish id so multiple RegionEditors on a page don't collide on
+	// the same <datalist>.
+	const datalistId = `region-palette-${Math.random().toString(36).slice(2, 8)}`;
 
 	const dimensions = $derived(axes.length);
 
@@ -117,6 +127,14 @@
 		Labelled bands, boxes, or polygons — e.g. "sex feels attractive within this range".
 	</p>
 
+	{#if paletteColors.length > 0}
+		<datalist id={datalistId}>
+			{#each paletteColors as c (c)}
+				<option value={c}></option>
+			{/each}
+		</datalist>
+	{/if}
+
 	{#if regions.length === 0}
 		<p class="empty">No regions yet.</p>
 	{:else}
@@ -134,6 +152,7 @@
 						type="color"
 						bind:value={region.color}
 						class="color-picker"
+						list={datalistId}
 						aria-label="region colour"
 					/>
 					{#if region.shape.type === 'polygon'}

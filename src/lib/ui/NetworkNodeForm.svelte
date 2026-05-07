@@ -7,6 +7,9 @@
 	let label = $state('');
 	let color = $state('');
 
+	const paletteColors = $derived(graph.customization.theme.palette);
+	const datalistId = `node-palette-${Math.random().toString(36).slice(2, 8)}`;
+
 	function generateId(existing: NetworkNode[]): string {
 		// Find the smallest unused n_X id.
 		const used = new Set(existing.map((n) => n.id));
@@ -39,9 +42,16 @@
 		</label>
 		<label class="field colorfield">
 			<span class="label">Colour <small>(optional)</small></span>
-			<input type="color" bind:value={color} />
+			<input type="color" bind:value={color} list={datalistId} />
 		</label>
 	</div>
+	{#if paletteColors.length > 0}
+		<datalist id={datalistId}>
+			{#each paletteColors as c (c)}
+				<option value={c}></option>
+			{/each}
+		</datalist>
+	{/if}
 	<button type="submit" class="primary">+ add person</button>
 </form>
 

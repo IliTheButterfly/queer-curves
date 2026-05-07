@@ -382,6 +382,7 @@
 				bind:regions
 				axes={activeAxes}
 				defaultColor={selectedPalette.colors[0] ?? '#c98aff'}
+				paletteColors={selectedPalette.colors}
 			/>
 		</fieldset>
 	{:else}
@@ -391,10 +392,15 @@
 				What kinds of connections can exist between people. You can collapse them into a single
 				"connected" type for redacted views later.
 			</p>
+			<datalist id="edge-type-palette">
+				{#each selectedPalette.colors as c (c)}
+					<option value={c}></option>
+				{/each}
+			</datalist>
 			{#each edgeTypes as et, i (et.id)}
 				<div class="edge-row">
 					<input type="text" bind:value={et.label} placeholder="romantic" />
-					<input type="color" bind:value={et.color} class="color" />
+					<input type="color" bind:value={et.color} class="color" list="edge-type-palette" />
 					{#if edgeTypes.length > 1}
 						<button
 							type="button"

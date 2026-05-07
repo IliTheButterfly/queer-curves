@@ -450,31 +450,56 @@
 			return d3
 				.drag<SVGCircleElement, unknown>()
 				.on('drag', function (event) {
-					const x = clamp(event.x, 0, iw);
-					const y = clamp(event.y, 0, ih);
+					// Clamp the drag to the half-plane where this corner stays
+					// on the correct side of its opposite. Without this, dragging
+					// past the opposite corner flips the rect and the corner
+					// identities go out of sync with the visual.
+					const otherXPx = c.cornerX === 'min' ? xs(shape.max[0]) : xs(shape.min[0]);
+					const otherYPx = c.cornerY === 'min' ? ys(shape.max[1]) : ys(shape.min[1]);
+					let x = clamp(event.x, 0, iw);
+					let y = clamp(event.y, 0, ih);
+					if (c.cornerX === 'min') x = Math.min(x, otherXPx);
+					else x = Math.max(x, otherXPx);
+					// In pixel space, "max" on the y-axis is at the TOP, i.e.
+					// a smaller pixel y. So cornerY='max' clamps to <= otherY.
+					if (c.cornerY === 'max') y = Math.min(y, otherYPx);
+					else y = Math.max(y, otherYPx);
+
 					d3.select(this).attr('cx', x).attr('cy', y);
-					// Resize rect: keep the OPPOSITE corner anchored, move this one.
-					const otherX = c.cornerX === 'min' ? xs(shape.max[0]) : xs(shape.min[0]);
-					const otherY = c.cornerY === 'min' ? ys(shape.max[1]) : ys(shape.min[1]);
-					const xMin = Math.min(x, otherX);
-					const xMax = Math.max(x, otherX);
-					const yTop = Math.min(y, otherY);
-					const yBot = Math.max(y, otherY);
+
+					const xMin = c.cornerX === 'min' ? x : otherXPx;
+					const xMax = c.cornerX === 'max' ? x : otherXPx;
+					const yTop = c.cornerY === 'max' ? y : otherYPx;
+					const yBot = c.cornerY === 'min' ? y : otherYPx;
 					rect
 						.attr('x', xMin)
 						.attr('y', yTop)
 						.attr('width', xMax - xMin)
 						.attr('height', yBot - yTop);
+
+					// Update the other three handles so all four track the rect.
+					for (const { c: oc, handle } of cornerHandles) {
+						if (oc.id === c.id) continue;
+						const ox = oc.cornerX === 'min' ? xMin : xMax;
+						const oy = oc.cornerY === 'max' ? yTop : yBot;
+						handle.attr('cx', ox).attr('cy', oy);
+					}
 				})
 				.on('end', function (event) {
-					const x = clamp(event.x, 0, iw);
-					const y = clamp(event.y, 0, ih);
+					const otherX = c.cornerX === 'min' ? shape.max[0] : shape.min[0];
+					const otherY = c.cornerY === 'min' ? shape.max[1] : shape.min[1];
+					const otherXPx = c.cornerX === 'min' ? xs(shape.max[0]) : xs(shape.min[0]);
+					const otherYPx = c.cornerY === 'min' ? ys(shape.max[1]) : ys(shape.min[1]);
+					let x = clamp(event.x, 0, iw);
+					let y = clamp(event.y, 0, ih);
+					if (c.cornerX === 'min') x = Math.min(x, otherXPx);
+					else x = Math.max(x, otherXPx);
+					if (c.cornerY === 'max') y = Math.min(y, otherYPx);
+					else y = Math.max(y, otherYPx);
 					const newVal: [number, number] = [
 						clamp(xs.invert(x), ax0.range[0], ax0.range[1]),
 						clamp(ys.invert(y), ax1.range[0], ax1.range[1])
 					];
-					const otherX = c.cornerX === 'min' ? shape.max[0] : shape.min[0];
-					const otherY = c.cornerY === 'min' ? shape.max[1] : shape.min[1];
 					shape.min = [Math.min(newVal[0], otherX), Math.min(newVal[1], otherY)];
 					shape.max = [Math.max(newVal[0], otherX), Math.max(newVal[1], otherY)];
 				});
