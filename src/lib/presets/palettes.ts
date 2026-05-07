@@ -156,3 +156,23 @@ export const palettesById = new Map(palettes.map((p) => [p.id, p]));
 export function findPalette(id: string): Palette | undefined {
 	return palettesById.get(id);
 }
+
+/**
+ * Drop duplicate hex values from a palette's colour list, preserving order
+ * of first occurrence. The source palettes keep their stripe order
+ * (which sometimes mirrors — e.g. trans is light-blue / pink / white /
+ * pink / light-blue), but consumers picking a colour from the palette
+ * shouldn't see the same swatch twice.
+ */
+export function dedupColors(colors: string[]): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const c of colors) {
+		const norm = c.toLowerCase();
+		if (!seen.has(norm)) {
+			seen.add(norm);
+			out.push(c);
+		}
+	}
+	return out;
+}

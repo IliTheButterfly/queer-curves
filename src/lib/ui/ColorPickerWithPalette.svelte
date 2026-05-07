@@ -1,9 +1,16 @@
 <script lang="ts">
+	import { dedupColors } from '$lib/presets/palettes.js';
+
 	let {
 		value = $bindable(),
 		paletteColors = [],
 		ariaLabel = 'colour'
 	}: { value: string; paletteColors?: string[]; ariaLabel?: string } = $props();
+
+	// Flag palettes often repeat colours for stripe symmetry (trans is
+	// light-blue / pink / white / pink / light-blue). Picking the same
+	// colour twice in the swatch row makes no sense — dedupe.
+	const swatches = $derived(dedupColors(paletteColors));
 
 	function isActive(c: string): boolean {
 		return value.toLowerCase() === c.toLowerCase();
@@ -15,12 +22,9 @@
 </script>
 
 <div class="picker">
-	{#if paletteColors.length > 0}
+	{#if swatches.length > 0}
 		<div class="swatches" role="radiogroup" aria-label="palette colours">
-			<!-- Don't key by colour: queer flags often repeat colours (trans
-			     has #5BCEFA twice, etc.) and Svelte rejects duplicate keys.
-			     Index keying handles repeats just fine. -->
-			{#each paletteColors as c, i (i)}
+			{#each swatches as c (c)}
 				<button
 					type="button"
 					class="swatch"
