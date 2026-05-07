@@ -2,11 +2,7 @@
 // data model must always remain expressible against — useful for dev,
 // demos, and tests.
 
-import {
-	SCHEMA_VERSION,
-	type NetworkGraph,
-	type SpectrumGraph
-} from './types.js';
+import { SCHEMA_VERSION, type NetworkGraph, type SpectrumGraph } from './types.js';
 
 const now = '2026-05-07T12:00:00Z';
 const placeholderOwner = '@example:queercurves.app';

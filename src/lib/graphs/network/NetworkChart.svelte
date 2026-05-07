@@ -29,10 +29,10 @@
 	$effect(() => {
 		// Re-render when prop changes after mount. Reuse the instance rather
 		// than tearing down — cheaper, preserves any pan/zoom state.
-		graph;
+		const g = graph;
 		if (cy) {
 			cy.elements().remove();
-			cy.add(buildElements(graph));
+			cy.add(buildElements(g));
 			cy.layout(layout).run();
 		}
 	});
@@ -45,8 +45,7 @@
 	function buildElements(g: NetworkGraph): cytoscape.ElementDefinition[] {
 		const edgeTypes = new Map(g.schema.edge_types.map((et) => [et.id, et]));
 		const palette = g.customization.theme.palette;
-		const defaultNodeColor =
-			g.customization.node_style?.default_color ?? palette[0] ?? '#c98aff';
+		const defaultNodeColor = g.customization.node_style?.default_color ?? palette[0] ?? '#c98aff';
 
 		return [
 			...g.nodes.map((n) => ({

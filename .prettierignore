@@ -1,0 +1,13 @@
+build/
+.svelte-kit/
+dist/
+node_modules/
+pnpm-lock.yaml
+LICENSE
+
+# Design docs are long-form prose; we keep our own formatting instead of
+# letting prettier reflow paragraphs and tables.
+data_model.md
+sharing_model.md
+THREATS.md
+STACK.md

@@ -6,9 +6,7 @@
 
 	let svgEl: SVGSVGElement;
 
-	const dims = $derived(
-		graph.schema.dimensions === 2 ? { W: 600, H: 600 } : { W: 800, H: 400 }
-	);
+	const dims = $derived(graph.schema.dimensions === 2 ? { W: 600, H: 600 } : { W: 800, H: 400 });
 
 	$effect(() => {
 		if (!svgEl) return;
@@ -207,11 +205,7 @@
 					.attr('opacity', r.opacity ?? 0.25);
 			} else if (r.shape.type === 'polygon') {
 				const d =
-					'M ' +
-					r.shape.vertices
-						.map(([x, y]) => `${xScale(x)},${yScale(y)}`)
-						.join(' L ') +
-					' Z';
+					'M ' + r.shape.vertices.map(([x, y]) => `${xScale(x)},${yScale(y)}`).join(' L ') + ' Z';
 				inner
 					.append('path')
 					.attr('d', d)
