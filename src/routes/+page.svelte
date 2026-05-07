@@ -1,13 +1,20 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { fixtures, type Graph } from '$lib';
 	import { palettes } from '$lib/presets/palettes.js';
+	import { listUserGraphs } from '$lib/store/graphs.js';
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
 
-	const graphs: Graph[] = fixtures.allFixtures;
-	// Featured palettes on the landing — the canonical-rainbow ones.
+	const fixtureGraphs: Graph[] = fixtures.allFixtures;
+	let userGraphs = $state<Graph[]>([]);
+
 	const featuredPalettes = palettes
 		.filter((p) => ['pride', 'progress', 'trans', 'bi', 'lesbian', 'nb'].includes(p.id))
 		.slice(0, 6);
+
+	onMount(() => {
+		userGraphs = listUserGraphs();
+	});
 
 	function summarize(g: Graph): string {
 		if (g.type === 'spectrum') {
@@ -31,10 +38,32 @@
 		<code>THREATS.md</code>, <code>STACK.md</code>.
 	</p>
 
+	<h2>
+		Your graphs
+		<a class="cta" href="/graphs/new">+ new graph</a>
+	</h2>
+	{#if userGraphs.length === 0}
+		<p class="muted">
+			No graphs yet. Create one — it's stored locally on this device for now; Matrix-backed sharing
+			comes later.
+		</p>
+	{:else}
+		<ul class="graph-list">
+			{#each userGraphs as graph (graph.id)}
+				<li>
+					<a href="/graphs/{graph.id}">
+						<strong>{graph.name}</strong>
+						<span class="muted">— {summarize(graph)}</span>
+					</a>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+
 	<h2>Fixtures</h2>
 	<p class="muted">Canonical test cases — see <code>data_model.md</code> §11.</p>
 	<ul class="graph-list">
-		{#each graphs as graph (graph.id)}
+		{#each fixtureGraphs as graph (graph.id)}
 			<li>
 				<a href="/graphs/{graph.id}">
 					<strong>{graph.name}</strong>
@@ -71,11 +100,21 @@
 		margin-top: var(--space-5);
 		color: var(--color-accent);
 	}
+	.cta,
 	.see-all {
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 		font-weight: normal;
 		color: var(--color-muted);
 		text-decoration: none;
+	}
+	.cta {
+		padding: var(--space-1) var(--space-3);
+		background: rgba(201, 138, 255, 0.15);
+		border-radius: 4px;
+		color: var(--color-accent);
+	}
+	.cta:hover {
+		background: rgba(201, 138, 255, 0.25);
 	}
 	.see-all:hover {
 		color: var(--color-accent);
