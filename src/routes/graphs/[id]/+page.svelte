@@ -4,8 +4,11 @@
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
 	import SpectrumDatapointForm from '$lib/ui/SpectrumDatapointForm.svelte';
+	import SpectrumDatapointList from '$lib/ui/SpectrumDatapointList.svelte';
 	import NetworkNodeForm from '$lib/ui/NetworkNodeForm.svelte';
+	import NetworkNodeList from '$lib/ui/NetworkNodeList.svelte';
 	import NetworkEdgeForm from '$lib/ui/NetworkEdgeForm.svelte';
+	import NetworkEdgeList from '$lib/ui/NetworkEdgeList.svelte';
 	import { deleteUserGraph, saveUserGraph } from '$lib/store/graphs.js';
 	import type {
 		Graph,
@@ -65,6 +68,38 @@
 		persist(updated);
 	}
 
+	function handleRemoveDatapoint(id: string) {
+		if (graph.type !== 'spectrum') return;
+		const updated: SpectrumGraph = {
+			...graph,
+			modified_at: new Date().toISOString(),
+			datapoints: graph.datapoints.filter((dp) => dp.id !== id)
+		};
+		persist(updated);
+	}
+
+	function handleRemoveNode(id: string) {
+		if (graph.type !== 'network') return;
+		// Cascade: removing a person also removes all their connections.
+		const updated: NetworkGraph = {
+			...graph,
+			modified_at: new Date().toISOString(),
+			nodes: graph.nodes.filter((n) => n.id !== id),
+			edges: graph.edges.filter((e) => e.source !== id && e.target !== id)
+		};
+		persist(updated);
+	}
+
+	function handleRemoveEdge(id: string) {
+		if (graph.type !== 'network') return;
+		const updated: NetworkGraph = {
+			...graph,
+			modified_at: new Date().toISOString(),
+			edges: graph.edges.filter((e) => e.id !== id)
+		};
+		persist(updated);
+	}
+
 	async function handleDelete() {
 		if (!confirm(`Delete "${graph.name}"? This can't be undone.`)) return;
 		deleteUserGraph(graph.id);
@@ -113,9 +148,16 @@
 		<section class="editors">
 			{#if graph.type === 'spectrum'}
 				<SpectrumDatapointForm {graph} onsubmit={handleAddDatapoint} />
+				<SpectrumDatapointList
+					datapoints={graph.datapoints}
+					axes={graph.schema.axes}
+					onremove={handleRemoveDatapoint}
+				/>
 			{:else}
 				<NetworkNodeForm {graph} onsubmit={handleAddNode} />
+				<NetworkNodeList {graph} onremove={handleRemoveNode} />
 				<NetworkEdgeForm {graph} onsubmit={handleAddEdge} />
+				<NetworkEdgeList {graph} onremove={handleRemoveEdge} />
 			{/if}
 		</section>
 	{/if}
