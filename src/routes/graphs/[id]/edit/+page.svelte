@@ -3,6 +3,9 @@
 	import { saveUserGraph } from '$lib/store/graphs.js';
 	import GraphConfigForm from '$lib/ui/GraphConfigForm.svelte';
 	import type { Graph } from '$lib/types.js';
+	import type { PageData } from './$types';
+
+	let { data }: { data: PageData } = $props();
 
 	async function handleSubmit(graph: Graph) {
 		saveUserGraph(graph);
@@ -11,14 +14,18 @@
 </script>
 
 <svelte:head>
-	<title>New graph – queer-curves</title>
+	<title>Edit {data.graph.name} – queer-curves</title>
 </svelte:head>
 
 <main>
-	<p class="back"><a href="/">← home</a></p>
-	<h1>New graph</h1>
+	<p class="back"><a href="/graphs/{data.graph.id}">← back to graph</a></p>
+	<h1>Edit {data.graph.name}</h1>
 
-	<GraphConfigForm onsubmit={handleSubmit} cancelHref="/" />
+	<GraphConfigForm
+		initial={data.graph}
+		onsubmit={handleSubmit}
+		cancelHref="/graphs/{data.graph.id}"
+	/>
 </main>
 
 <style>

@@ -81,7 +81,10 @@
 	<div class="header-row">
 		<h1>{graph.name}</h1>
 		{#if isUserGraph}
-			<button type="button" class="danger-ghost" onclick={handleDelete}>Delete</button>
+			<div class="header-actions">
+				<a class="ghost-link" href="/graphs/{graph.id}/edit">Edit</a>
+				<button type="button" class="danger-ghost" onclick={handleDelete}>Delete</button>
+			</div>
 		{/if}
 	</div>
 	{#if graph.description}
@@ -162,6 +165,25 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
+	}
+	.header-actions {
+		display: flex;
+		gap: var(--space-2);
+		align-items: center;
+	}
+	.ghost-link {
+		display: inline-block;
+		background: transparent;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: var(--color-fg);
+		padding: var(--space-1) var(--space-3);
+		border-radius: 4px;
+		font: inherit;
+		text-decoration: none;
+	}
+	.ghost-link:hover {
+		background: rgba(255, 255, 255, 0.05);
+		border-color: var(--color-accent);
 	}
 	button.danger-ghost {
 		background: transparent;
