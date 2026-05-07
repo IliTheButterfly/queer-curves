@@ -524,8 +524,9 @@
 		const xs = d3.scaleLinear().domain(ax0.range).range([0, iw]);
 		const ys = d3.scaleLinear().domain(ax1.range).range([ih, 0]);
 
-		// Plot frame
-		inner
+		// Plot frame doubles as a click target — click anywhere to insert a
+		// new vertex on the nearest edge, at the click position.
+		const frame = inner
 			.append('rect')
 			.attr('x', 0)
 			.attr('y', 0)
@@ -534,7 +535,35 @@
 			.attr('fill', 'rgba(255,255,255,0.02)')
 			.attr('stroke', 'var(--color-muted)')
 			.attr('stroke-opacity', 0.3)
-			.attr('pointer-events', 'none');
+			.attr('cursor', 'crosshair');
+
+		frame.on('click', (event) => {
+			const [px, py] = d3.pointer(event);
+			const verts = shape.vertices;
+			let bestIdx = 0;
+			let bestDist = Infinity;
+			for (let i = 0; i < verts.length; i++) {
+				const a = verts[i];
+				const b = verts[(i + 1) % verts.length];
+				const d = pointToSegmentDistPx(px, py, xs(a[0]), ys(a[1]), xs(b[0]), ys(b[1]));
+				if (d < bestDist) {
+					bestDist = d;
+					bestIdx = i;
+				}
+			}
+			const newVertex: [number, number] = [
+				clamp(xs.invert(px), ax0.range[0], ax0.range[1]),
+				clamp(ys.invert(py), ax1.range[0], ax1.range[1])
+			];
+			// Replace the array (not mutate in place) so the structuralKey
+			// effect re-fires and rebuilds the SVG with a handle on the new
+			// vertex.
+			shape.vertices = [
+				...verts.slice(0, bestIdx + 1),
+				newVertex,
+				...verts.slice(bestIdx + 1)
+			];
+		});
 
 		// Axis labels (compact)
 		inner
@@ -544,6 +573,7 @@
 			.attr('text-anchor', 'start')
 			.attr('font-size', 10)
 			.attr('fill', 'var(--color-muted)')
+			.attr('pointer-events', 'none')
 			.text(ax0.min_label);
 		inner
 			.append('text')
@@ -552,6 +582,7 @@
 			.attr('text-anchor', 'end')
 			.attr('font-size', 10)
 			.attr('fill', 'var(--color-muted)')
+			.attr('pointer-events', 'none')
 			.text(ax0.max_label);
 		inner
 			.append('text')
@@ -561,6 +592,7 @@
 			.attr('dominant-baseline', 'middle')
 			.attr('font-size', 10)
 			.attr('fill', 'var(--color-muted)')
+			.attr('pointer-events', 'none')
 			.text(ax1.min_label);
 		inner
 			.append('text')
@@ -570,6 +602,7 @@
 			.attr('dominant-baseline', 'hanging')
 			.attr('font-size', 10)
 			.attr('fill', 'var(--color-muted)')
+			.attr('pointer-events', 'none')
 			.text(ax1.max_label);
 
 		// Waypoint guide lines
@@ -615,7 +648,8 @@
 		}
 		polyPath.attr('d', pathFromVertices());
 
-		// Vertex handles
+		// Vertex handles. Shift-click a vertex to remove (when there are
+		// more than 3 left).
 		const vertexHandles = shape.vertices.map((_, i) => {
 			const h = inner
 				.append('circle')
@@ -627,6 +661,12 @@
 				.attr('cursor', 'grab')
 				.attr('cx', xs(shape.vertices[i][0]))
 				.attr('cy', ys(shape.vertices[i][1]));
+			h.on('click', (event) => {
+				if (!event.shiftKey) return;
+				event.stopPropagation();
+				if (shape.vertices.length <= 3) return;
+				shape.vertices = shape.vertices.filter((_, j) => j !== i);
+			});
 			h.call(makeVertexDrag(i));
 			return h;
 		});
@@ -657,6 +697,25 @@
 					shape.vertices[i] = [xVal, yVal];
 				});
 		}
+	}
+
+	function pointToSegmentDistPx(
+		px: number,
+		py: number,
+		ax: number,
+		ay: number,
+		bx: number,
+		by: number
+	): number {
+		const dx = bx - ax;
+		const dy = by - ay;
+		const len2 = dx * dx + dy * dy;
+		if (len2 === 0) return Math.hypot(px - ax, py - ay);
+		let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+		t = Math.max(0, Math.min(1, t));
+		const cx = ax + t * dx;
+		const cy = ay + t * dy;
+		return Math.hypot(px - cx, py - cy);
 	}
 </script>
 
