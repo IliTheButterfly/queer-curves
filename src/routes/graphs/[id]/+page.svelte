@@ -1,13 +1,69 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
-	import { deleteUserGraph } from '$lib/store/graphs.js';
+	import SpectrumDatapointForm from '$lib/ui/SpectrumDatapointForm.svelte';
+	import NetworkNodeForm from '$lib/ui/NetworkNodeForm.svelte';
+	import NetworkEdgeForm from '$lib/ui/NetworkEdgeForm.svelte';
+	import { deleteUserGraph, saveUserGraph } from '$lib/store/graphs.js';
+	import type {
+		Graph,
+		NetworkEdge,
+		NetworkGraph,
+		NetworkNode,
+		SpectrumDatapoint,
+		SpectrumGraph
+	} from '$lib/types.js';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
-	const graph = $derived(data.graph);
+
+	// Local mutable copy. Re-seeded when navigating to a different graph,
+	// preserved across in-page edits.
+	let graph = $state<Graph>(untrack(() => data.graph));
+	$effect(() => {
+		if (data.graph.id !== graph.id) {
+			graph = data.graph;
+		}
+	});
+
 	const isUserGraph = $derived(data.isUserGraph);
+
+	function persist(updated: Graph) {
+		graph = updated;
+		if (isUserGraph) saveUserGraph(updated);
+	}
+
+	function handleAddDatapoint(dp: SpectrumDatapoint) {
+		if (graph.type !== 'spectrum') return;
+		const updated: SpectrumGraph = {
+			...graph,
+			modified_at: new Date().toISOString(),
+			datapoints: [...graph.datapoints, dp]
+		};
+		persist(updated);
+	}
+
+	function handleAddNode(node: NetworkNode) {
+		if (graph.type !== 'network') return;
+		const updated: NetworkGraph = {
+			...graph,
+			modified_at: new Date().toISOString(),
+			nodes: [...graph.nodes, node]
+		};
+		persist(updated);
+	}
+
+	function handleAddEdge(edge: NetworkEdge) {
+		if (graph.type !== 'network') return;
+		const updated: NetworkGraph = {
+			...graph,
+			modified_at: new Date().toISOString(),
+			edges: [...graph.edges, edge]
+		};
+		persist(updated);
+	}
 
 	async function handleDelete() {
 		if (!confirm(`Delete "${graph.name}"? This can't be undone.`)) return;
@@ -50,11 +106,15 @@
 		{/if}
 	</div>
 
-	{#if isUserGraph && ((graph.type === 'spectrum' && graph.datapoints.length === 0) || (graph.type === 'network' && graph.nodes.length === 0))}
-		<p class="muted empty-hint">
-			This graph is empty. Datapoint and node editors are coming next — for now the schema is in
-			place and you can preview it under different palettes.
-		</p>
+	{#if isUserGraph}
+		<section class="editors">
+			{#if graph.type === 'spectrum'}
+				<SpectrumDatapointForm {graph} onsubmit={handleAddDatapoint} />
+			{:else}
+				<NetworkNodeForm {graph} onsubmit={handleAddNode} />
+				<NetworkEdgeForm {graph} onsubmit={handleAddEdge} />
+			{/if}
+		</section>
 	{/if}
 </main>
 
@@ -97,12 +157,11 @@
 		background: rgba(255, 255, 255, 0.03);
 		border-radius: 4px;
 	}
-	.empty-hint {
+	.editors {
 		margin-top: var(--space-4);
-		padding: var(--space-3);
-		background: rgba(255, 255, 255, 0.02);
-		border-radius: 4px;
-		font-size: 0.9em;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
 	}
 	button.danger-ghost {
 		background: transparent;
