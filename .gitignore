@@ -1,0 +1,40 @@
+# Dependencies
+node_modules
+.npm
+.pnpm-store
+
+# Build output
+.svelte-kit
+build
+dist
+
+# Vite
+.vite
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test artifacts
+coverage
+test-results
+playwright-report
+playwright/.cache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
