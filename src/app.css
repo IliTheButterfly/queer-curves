@@ -1,0 +1,62 @@
+:root {
+	--color-bg: #1a1424;
+	--color-fg: #e8d8f5;
+	--color-accent: #c98aff;
+	--color-muted: #998aaa;
+
+	--font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--font-mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace;
+
+	--space-1: 0.25rem;
+	--space-2: 0.5rem;
+	--space-3: 1rem;
+	--space-4: 1.5rem;
+	--space-5: 2rem;
+	--space-6: 3rem;
+
+	color-scheme: dark;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	font-family: var(--font-family);
+	background: var(--color-bg);
+	color: var(--color-fg);
+	line-height: 1.5;
+	min-height: 100vh;
+}
+
+main {
+	max-width: 60ch;
+	margin: 0 auto;
+	padding: var(--space-6) var(--space-4);
+}
+
+h1 {
+	font-size: 2rem;
+	margin: 0 0 var(--space-4);
+	color: var(--color-accent);
+}
+
+p {
+	margin: 0 0 var(--space-3);
+}
+
+code {
+	font-family: var(--font-mono);
+	font-size: 0.9em;
+	color: var(--color-accent);
+}
+
+a {
+	color: var(--color-accent);
+}
