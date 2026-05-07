@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { Axis, SpectrumDatapoint, SpectrumGraph } from '$lib/types.js';
+	import SpectrumPointPicker from './SpectrumPointPicker.svelte';
 
 	let { graph, onsubmit }: { graph: SpectrumGraph; onsubmit: (dp: SpectrumDatapoint) => void } =
 		$props();
 
 	function nowLocal(): string {
-		// datetime-local format: YYYY-MM-DDTHH:MM in the user's local zone.
 		const d = new Date();
 		const pad = (n: number) => String(n).padStart(2, '0');
 		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -16,14 +16,6 @@
 		return (axis.range[0] + axis.range[1]) / 2;
 	}
 
-	function axisStep(axis: Axis): number {
-		const span = axis.range[1] - axis.range[0];
-		return Math.max(span / 100, 0.001);
-	}
-
-	// Coords seeded from the schema once at mount. The schema doesn't change
-	// during the form's lifetime — only the parent graph's data does — so we
-	// untrack the initial read to make that explicit.
 	let coords = $state<number[]>(untrack(() => graph.schema.axes.map(midpoint)));
 	let timestamp = $state(nowLocal());
 	let notes = $state('');
@@ -44,8 +36,8 @@
 
 		onsubmit(dp);
 
-		// Reset for the next entry; keep coords (often you're tracking small
-		// shifts) but bump the timestamp forward and clear notes.
+		// Reset for the next entry. Keep coords so consecutive datapoints
+		// nudge from the last position rather than snapping back.
 		timestamp = nowLocal();
 		notes = '';
 	}
@@ -53,32 +45,20 @@
 
 <form onsubmit={handleSubmit} class="dp-form">
 	<h3>Add datapoint</h3>
+	<p class="hint">Click anywhere on the picker, or drag the marker.</p>
 
-	{#each graph.schema.axes as axis, i (i)}
-		<div class="axis-row">
-			<div class="axis-label">{axis.name}</div>
-			<div class="slider">
-				<span class="endpoint">{axis.min_label}</span>
-				<input
-					type="range"
-					min={axis.range[0]}
-					max={axis.range[1]}
-					step={axisStep(axis)}
-					bind:value={coords[i]}
-					aria-label={axis.name}
-				/>
-				<span class="endpoint">{axis.max_label}</span>
-			</div>
-			<input
-				type="number"
-				step={axisStep(axis)}
-				min={axis.range[0]}
-				max={axis.range[1]}
-				bind:value={coords[i]}
-				class="coord"
-			/>
-		</div>
-	{/each}
+	<div class="picker-wrap">
+		<SpectrumPointPicker {graph} bind:coordinates={coords} />
+	</div>
+
+	<div class="coord-readout" aria-live="polite">
+		{#each graph.schema.axes as axis, i (i)}
+			<span class="coord">
+				<span class="muted">{axis.name}:</span>
+				<code>{coords[i]?.toFixed(2)}</code>
+			</span>
+		{/each}
+	</div>
 
 	<div class="row">
 		<label class="field">
@@ -91,7 +71,7 @@
 		</label>
 	</div>
 
-	<button type="submit" class="primary">+ add datapoint</button>
+	<button type="submit" class="primary">+ commit datapoint</button>
 </form>
 
 <style>
@@ -109,42 +89,27 @@
 		font-size: 1rem;
 		color: var(--color-accent);
 	}
-
-	.axis-row {
-		display: grid;
-		grid-template-columns: 100px 1fr 80px;
-		gap: var(--space-3);
-		align-items: center;
-	}
-	.axis-label {
+	.hint {
+		margin: 0;
 		color: var(--color-muted);
-		font-size: 0.9em;
+		font-size: 0.85em;
 	}
-	.slider {
-		display: flex;
-		gap: var(--space-2);
-		align-items: center;
-	}
-	.slider input[type='range'] {
-		flex: 1;
-		accent-color: var(--color-accent);
-	}
-	.endpoint {
-		color: var(--color-muted);
-		font-size: 0.8em;
-		white-space: nowrap;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.coord {
-		text-align: right;
-		background: rgba(0, 0, 0, 0.25);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		color: var(--color-fg);
-		padding: var(--space-1) var(--space-2);
+	.picker-wrap {
+		padding: var(--space-2);
+		background: rgba(0, 0, 0, 0.2);
 		border-radius: 4px;
-		font: inherit;
+	}
+	.coord-readout {
+		display: flex;
+		gap: var(--space-3);
+		flex-wrap: wrap;
+		font-size: 0.85em;
+	}
+	.coord code {
+		color: var(--color-accent);
+	}
+	.muted {
+		color: var(--color-muted);
 	}
 
 	.row {
@@ -169,8 +134,7 @@
 		border-radius: 4px;
 		font: inherit;
 	}
-	.field input:focus,
-	.coord:focus {
+	.field input:focus {
 		outline: none;
 		border-color: var(--color-accent);
 	}

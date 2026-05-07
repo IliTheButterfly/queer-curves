@@ -6,11 +6,13 @@
 		type EdgeType,
 		type Graph,
 		type NetworkGraph,
+		type Region,
 		type SpectrumGraph
 	} from '$lib/types.js';
 	import { generateGraphId, saveUserGraph } from '$lib/store/graphs.js';
 	import { palettes } from '$lib/presets/palettes.js';
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
+	import RegionEditor from '$lib/ui/RegionEditor.svelte';
 
 	type GraphType = 'spectrum' | 'network';
 
@@ -27,7 +29,10 @@
 		{ name: 'axis 2', min_label: '', max_label: '', range: [0, 1], waypoints: [] }
 	]);
 
+	let regions = $state<Region[]>([]);
 	let edgeTypes = $state<EdgeType[]>([{ id: 'edge-1', label: 'connected', color: '#c98aff' }]);
+
+	const activeAxes = $derived(axes.slice(0, dimensions));
 
 	const selectedPalette = $derived(palettes.find((p) => p.id === paletteId) ?? palettes[0]);
 
@@ -79,7 +84,12 @@
 						...a,
 						waypoints: a.waypoints?.filter((w) => w.label.trim() !== '')
 					})),
-					regions: []
+					regions: regions.filter((r) => {
+						if (r.label.trim() === '') return false;
+						if (dimensions === 1) return r.shape.type === 'range';
+						if (dimensions === 2) return r.shape.type === 'box';
+						return false;
+					})
 				},
 				customization: baseCustomization,
 				datapoints: []
@@ -226,6 +236,15 @@
 					</fieldset>
 				{/if}
 			{/each}
+
+			<fieldset class="regions-fieldset">
+				<legend>Regions</legend>
+				<RegionEditor
+					bind:regions
+					axes={activeAxes}
+					defaultColor={selectedPalette.colors[0] ?? '#c98aff'}
+				/>
+			</fieldset>
 		{:else}
 			<fieldset>
 				<legend>Edge types</legend>
