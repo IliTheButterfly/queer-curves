@@ -1,20 +1,12 @@
 <script lang="ts">
-	import { fixtures, type Graph } from '$lib';
+	import { fixtures } from '$lib';
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
+	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
 
 	const aceflux = fixtures.acefluxFixture;
 	const genderfluid = fixtures.genderfluidFixture;
-	const others: Graph[] = fixtures.allFixtures.filter(
-		(g) => g.id !== aceflux.id && g.id !== genderfluid.id
-	);
-
-	function summarize(g: Graph): string {
-		if (g.type === 'spectrum') {
-			const n = g.datapoints.length;
-			return `${g.schema.dimensions}D spectrum, ${n} datapoint${n === 1 ? '' : 's'}`;
-		}
-		return `network, ${g.nodes.length} nodes, ${g.edges.length} edges`;
-	}
+	const polycule = fixtures.polyculeFixture;
+	const polyculeRedacted = fixtures.polyculeRedactedFixture;
 </script>
 
 <svelte:head>
@@ -46,15 +38,23 @@
 		<SpectrumHistoryChart graph={genderfluid} />
 	</div>
 
-	<h2>Other fixtures</h2>
-	<ul>
-		{#each others as graph (graph.id)}
-			<li>
-				<strong>{graph.name}</strong>
-				<span class="muted">— {summarize(graph)}</span>
-			</li>
-		{/each}
-	</ul>
+	<h2>{polycule.name}</h2>
+	<p class="muted">
+		Polycule network — full-detail variant shared inside the polycule.
+	</p>
+	<div class="chart">
+		<NetworkChart graph={polycule} />
+	</div>
+
+	<h2>{polycule.name} <span class="muted">— redacted variant</span></h2>
+	<p class="muted">
+		Same polycule, edge types collapsed to "connected" — the variant
+		shared with audiences outside the polycule.
+		See <code>sharing_model.md</code> §7.
+	</p>
+	<div class="chart">
+		<NetworkChart graph={polyculeRedacted} />
+	</div>
 </main>
 
 <style>
@@ -62,12 +62,6 @@
 		font-size: 1.25rem;
 		margin-top: var(--space-5);
 		color: var(--color-accent);
-	}
-	ul {
-		padding-left: var(--space-4);
-	}
-	li {
-		margin-bottom: var(--space-2);
 	}
 	.muted {
 		color: var(--color-muted);

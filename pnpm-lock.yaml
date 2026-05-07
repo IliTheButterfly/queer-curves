@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      cytoscape:
+        specifier: ^3.33.3
+        version: 3.33.3
       d3:
         specifier: ^7.0.0
         version: 7.9.0
@@ -517,6 +520,10 @@ packages:
   cookie@0.6.0:
     resolution: {integrity: sha512-U71cyTamuh1CRNCfpGY6to28lxvNwPG4Guz/EVjgf3Jmzv0vlDp1atT9eS5dDjMYHucpHbWns6Lwf3BKz6svdw==}
     engines: {node: '>= 0.6'}
+
+  cytoscape@3.33.3:
+    resolution: {integrity: sha512-Gej7U+OKR+LZ8kvX7rb2HhCYJ0IhvEFsnkud4SB1PR+BUY/TsSO0dmOW59WEVLu51b1Rm+gQRKoz4bLYxGSZ2g==}
+    engines: {node: '>=0.10'}
 
   d3-array@3.2.4:
     resolution: {integrity: sha512-tdQAmyA18i4J7wprpYq8ClcxZy3SC31QMeByyCFyRt7BVHdREQZ5lpzoe5mFEYZUWe+oq8HBvk9JjpibyEV4Jg==}
@@ -1200,6 +1207,8 @@ snapshots:
   commander@7.2.0: {}
 
   cookie@0.6.0: {}
+
+  cytoscape@3.33.3: {}
 
   d3-array@3.2.4:
     dependencies:
