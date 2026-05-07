@@ -1,0 +1,189 @@
+// Domain types for queer-curves graphs.
+//
+// Mirrors the spec in data_model.md §1–§9. Schema changes here MUST bump
+// SCHEMA_VERSION (and update data_model.md §8) so older clients fail safe
+// rather than misrender unfamiliar shapes.
+
+export const SCHEMA_VERSION = 1;
+
+// A Matrix user reference, in canonical "@user:server" form.
+export type UserRef = string;
+
+// ISO 8601 UTC timestamp string. All timestamps are stored in UTC; clients
+// render in local zone (data_model.md §3.4).
+export type Timestamp = string;
+
+export type GraphType = 'spectrum' | 'network';
+
+// ─── Customization ──────────────────────────────────────────────────────────
+
+export interface ThemeCustomization {
+	// Ordered palette; per-element colors can reference indices via "@palette[i]".
+	palette: string[];
+	background?: string;
+	font?: string;
+}
+
+export interface TitleCustomization {
+	show: boolean;
+	text: string;
+}
+
+export interface BaseCustomization {
+	theme: ThemeCustomization;
+	title: TitleCustomization;
+	subtitle?: string;
+}
+
+export interface SpectrumCustomization extends BaseCustomization {
+	axis_style?: {
+		line_color?: string;
+		label_color?: string;
+	};
+	region_style?: {
+		default_opacity?: number;
+	};
+}
+
+export type LegendPosition = 'top' | 'bottom' | 'left' | 'right' | 'hidden';
+
+export interface NetworkCustomization extends BaseCustomization {
+	node_style?: {
+		default_color?: string;
+		shape?: 'circle' | 'square';
+	};
+	edge_style?: {
+		default_width?: number;
+	};
+	legend?: {
+		position: LegendPosition;
+	};
+}
+
+// ─── Common Graph fields ────────────────────────────────────────────────────
+
+export interface BaseGraph {
+	id: string;
+	type: GraphType;
+	name: string;
+	description?: string;
+	created_at: Timestamp;
+	modified_at: Timestamp;
+	schema_version: number;
+	owner: UserRef;
+	editors: UserRef[];
+}
+
+// ─── Spectrum graphs ────────────────────────────────────────────────────────
+
+export type SpectrumDimensions = 1 | 2 | 3;
+
+// A labeled position along a single axis. Per-axis, NOT a labeled point in
+// N-D space — point-in-space landmarks are deferred (data_model.md §10).
+export interface AxisWaypoint {
+	position: number;
+	label: string;
+	color?: string;
+}
+
+export interface Axis {
+	name: string;
+	min_label: string;
+	max_label: string;
+	range: [number, number];
+	waypoints?: AxisWaypoint[];
+}
+
+// A region's geometric shape. 3D regions deferred (data_model.md §10).
+export type RegionShape =
+	| { type: 'range'; min: number; max: number }
+	| { type: 'box'; min: number[]; max: number[] }
+	| { type: 'polygon'; vertices: [number, number][] };
+
+export interface Region {
+	id: string;
+	label: string;
+	shape: RegionShape;
+	color: string;
+	opacity?: number;
+}
+
+export interface SpectrumDatapoint {
+	id: string;
+	coordinates: number[];
+	timestamp: Timestamp;
+	notes?: string;
+	tags?: string[];
+}
+
+export interface SpectrumSchema {
+	dimensions: SpectrumDimensions;
+	axes: Axis[];
+	regions: Region[];
+}
+
+export interface SpectrumGraph extends BaseGraph {
+	type: 'spectrum';
+	schema: SpectrumSchema;
+	customization: SpectrumCustomization;
+	datapoints: SpectrumDatapoint[];
+}
+
+// ─── Network graphs ─────────────────────────────────────────────────────────
+
+export type LinkStatus = 'pending' | 'confirmed' | 'denied';
+
+export interface NetworkNode {
+	id: string;
+	label: string;
+	color?: string;
+	avatar_ref?: string;
+	// If subject_ref is set, this node names a real queer-curves user.
+	// Sharing such links requires consent — see sharing_model.md §12.
+	subject_ref?: UserRef;
+	// Required when subject_ref is set; tracks the consent handshake state.
+	link_status?: LinkStatus;
+	position?: { x: number; y: number };
+}
+
+export interface NetworkEdge {
+	id: string;
+	source: string;
+	target: string;
+	type_id: string;
+	label_override?: string;
+	directed?: boolean;
+}
+
+export interface EdgeType {
+	id: string;
+	label: string;
+	color: string;
+	description?: string;
+}
+
+export interface NetworkSchema {
+	edge_types: EdgeType[];
+}
+
+export interface NetworkGraph extends BaseGraph {
+	type: 'network';
+	schema: NetworkSchema;
+	customization: NetworkCustomization;
+	nodes: NetworkNode[];
+	edges: NetworkEdge[];
+}
+
+// ─── Discriminated union ────────────────────────────────────────────────────
+
+export type Graph = SpectrumGraph | NetworkGraph;
+
+// ─── Type guards ────────────────────────────────────────────────────────────
+
+export function isSpectrum(graph: Graph): graph is SpectrumGraph {
+	return graph.type === 'spectrum';
+}
+
+export function isNetwork(graph: Graph): graph is NetworkGraph {
+	return graph.type === 'network';
+}
