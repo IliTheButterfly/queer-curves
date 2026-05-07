@@ -558,11 +558,7 @@
 			// Replace the array (not mutate in place) so the structuralKey
 			// effect re-fires and rebuilds the SVG with a handle on the new
 			// vertex.
-			shape.vertices = [
-				...verts.slice(0, bestIdx + 1),
-				newVertex,
-				...verts.slice(bestIdx + 1)
-			];
+			shape.vertices = [...verts.slice(0, bestIdx + 1), newVertex, ...verts.slice(bestIdx + 1)];
 		});
 
 		// Axis labels (compact)

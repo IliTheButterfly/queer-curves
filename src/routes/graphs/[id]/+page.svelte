@@ -91,6 +91,33 @@
 		} satisfies NetworkGraph);
 	}
 
+	async function handleEditDatapoint(updated: SpectrumDatapoint) {
+		if (graph.type !== 'spectrum') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			datapoints: graph.datapoints.map((dp) => (dp.id === updated.id ? updated : dp))
+		} satisfies SpectrumGraph);
+	}
+
+	async function handleEditNode(updated: NetworkNode) {
+		if (graph.type !== 'network') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			nodes: graph.nodes.map((n) => (n.id === updated.id ? updated : n))
+		} satisfies NetworkGraph);
+	}
+
+	async function handleEditEdge(updated: NetworkEdge) {
+		if (graph.type !== 'network') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			edges: graph.edges.map((e) => (e.id === updated.id ? updated : e))
+		} satisfies NetworkGraph);
+	}
+
 	async function handleDelete() {
 		if (!confirm(`Delete "${graph.name}"? This can't be undone.`)) return;
 		deleteUserGraph(graph.id);
@@ -143,15 +170,17 @@
 			{#if graph.type === 'spectrum'}
 				<SpectrumDatapointForm {graph} onsubmit={handleAddDatapoint} />
 				<SpectrumDatapointList
+					{graph}
 					datapoints={graph.datapoints}
 					axes={graph.schema.axes}
 					onremove={handleRemoveDatapoint}
+					onedit={handleEditDatapoint}
 				/>
 			{:else}
 				<NetworkNodeForm {graph} onsubmit={handleAddNode} />
-				<NetworkNodeList {graph} onremove={handleRemoveNode} />
+				<NetworkNodeList {graph} onremove={handleRemoveNode} onedit={handleEditNode} />
 				<NetworkEdgeForm {graph} onsubmit={handleAddEdge} />
-				<NetworkEdgeList {graph} onremove={handleRemoveEdge} />
+				<NetworkEdgeList {graph} onremove={handleRemoveEdge} onedit={handleEditEdge} />
 			{/if}
 		</section>
 	{/if}

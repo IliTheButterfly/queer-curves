@@ -1,13 +1,25 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { NetworkEdge, NetworkGraph } from '$lib/types.js';
 
-	let { graph, onsubmit }: { graph: NetworkGraph; onsubmit: (edge: NetworkEdge) => void } =
-		$props();
+	let {
+		graph,
+		initial,
+		oncancel,
+		onsubmit
+	}: {
+		graph: NetworkGraph;
+		initial?: NetworkEdge;
+		oncancel?: () => void;
+		onsubmit: (edge: NetworkEdge) => void;
+	} = $props();
 
-	let source = $state('');
-	let target = $state('');
-	let typeId = $state('');
-	let labelOverride = $state('');
+	const isEdit = $derived(initial !== undefined);
+
+	let source = $state(untrack(() => initial?.source ?? ''));
+	let target = $state(untrack(() => initial?.target ?? ''));
+	let typeId = $state(untrack(() => initial?.type_id ?? ''));
+	let labelOverride = $state(untrack(() => initial?.label_override ?? ''));
 
 	const canSubmit = $derived(source !== '' && target !== '' && source !== target && typeId !== '');
 
@@ -24,25 +36,30 @@
 		e.preventDefault();
 		if (!canSubmit) return;
 		const edge: NetworkEdge = {
-			id: generateId(graph.edges),
+			id: initial?.id ?? generateId(graph.edges),
 			source,
 			target,
 			type_id: typeId
 		};
 		const trimmed = labelOverride.trim();
 		if (trimmed) edge.label_override = trimmed;
+		if (initial?.directed !== undefined) edge.directed = initial.directed;
+
 		onsubmit(edge);
-		labelOverride = '';
-		// Keep source/target/type — common to add multiple edges between same
-		// pair (e.g. romantic AND sexual within a polycule).
+
+		if (!isEdit) {
+			labelOverride = '';
+			// Keep source/target/type — common to add multiple edges between
+			// the same pair (e.g. romantic AND sexual within a polycule).
+		}
 	}
 </script>
 
-{#if graph.nodes.length < 2}
+{#if !isEdit && graph.nodes.length < 2}
 	<p class="muted gated">Add at least two people before connecting them.</p>
 {:else}
 	<form onsubmit={handleSubmit} class="edge-form">
-		<h3>Add connection</h3>
+		<h3>{isEdit ? 'Edit connection' : 'Add connection'}</h3>
 		<div class="row">
 			<label class="field">
 				<span class="label">From</span>
@@ -81,7 +98,14 @@
 				placeholder="leave blank to use the type label"
 			/>
 		</label>
-		<button type="submit" class="primary" disabled={!canSubmit}>+ add connection</button>
+		<div class="actions">
+			{#if oncancel}
+				<button type="button" class="cancel" onclick={oncancel}>Cancel</button>
+			{/if}
+			<button type="submit" class="primary" disabled={!canSubmit}>
+				{isEdit ? 'Save changes' : '+ add connection'}
+			</button>
+		</div>
 		{#if source !== '' && source === target}
 			<p class="hint">From and to are the same person.</p>
 		{/if}
@@ -131,8 +155,13 @@
 		outline: none;
 		border-color: var(--color-accent);
 	}
+	.actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--space-2);
+		align-items: center;
+	}
 	button.primary {
-		align-self: flex-start;
 		background: var(--color-accent);
 		color: #1a0a2a;
 		border: none;
@@ -148,6 +177,19 @@
 	}
 	button.primary:not(:disabled):hover {
 		filter: brightness(1.1);
+	}
+	button.cancel {
+		background: transparent;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: var(--color-muted);
+		padding: var(--space-2) var(--space-3);
+		border-radius: 4px;
+		cursor: pointer;
+		font: inherit;
+	}
+	button.cancel:hover {
+		color: var(--color-fg);
+		border-color: var(--color-accent);
 	}
 	.hint {
 		margin: 0;

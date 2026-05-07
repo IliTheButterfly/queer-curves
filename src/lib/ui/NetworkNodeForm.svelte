@@ -1,17 +1,28 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { NetworkGraph, NetworkNode } from '$lib/types.js';
 	import ColorPickerWithPalette from './ColorPickerWithPalette.svelte';
 
-	let { graph, onsubmit }: { graph: NetworkGraph; onsubmit: (node: NetworkNode) => void } =
-		$props();
+	let {
+		graph,
+		initial,
+		oncancel,
+		onsubmit
+	}: {
+		graph: NetworkGraph;
+		initial?: NetworkNode;
+		oncancel?: () => void;
+		onsubmit: (node: NetworkNode) => void;
+	} = $props();
 
-	let label = $state('');
-	let color = $state('');
+	const isEdit = $derived(initial !== undefined);
+
+	let label = $state(untrack(() => initial?.label ?? ''));
+	let color = $state(untrack(() => initial?.color ?? ''));
 
 	const paletteColors = $derived(graph.customization.theme.palette);
 
 	function generateId(existing: NetworkNode[]): string {
-		// Find the smallest unused n_X id.
 		const used = new Set(existing.map((n) => n.id));
 		for (let i = 1; i < 1000; i++) {
 			const id = `n${i}`;
@@ -23,18 +34,27 @@
 	function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		const node: NetworkNode = {
-			id: generateId(graph.nodes),
+			id: initial?.id ?? generateId(graph.nodes),
 			label: label.trim()
 		};
 		if (color) node.color = color;
+		// Preserve fields we don't edit here.
+		if (initial?.avatar_ref) node.avatar_ref = initial.avatar_ref;
+		if (initial?.subject_ref) node.subject_ref = initial.subject_ref;
+		if (initial?.link_status) node.link_status = initial.link_status;
+		if (initial?.position) node.position = initial.position;
+
 		onsubmit(node);
-		label = '';
-		color = '';
+
+		if (!isEdit) {
+			label = '';
+			color = '';
+		}
 	}
 </script>
 
 <form onsubmit={handleSubmit} class="node-form">
-	<h3>Add person</h3>
+	<h3>{isEdit ? 'Edit person' : 'Add person'}</h3>
 	<div class="row">
 		<label class="field">
 			<span class="label">Name</span>
@@ -45,7 +65,14 @@
 			<ColorPickerWithPalette bind:value={color} {paletteColors} ariaLabel="person colour" />
 		</div>
 	</div>
-	<button type="submit" class="primary">+ add person</button>
+	<div class="actions">
+		{#if oncancel}
+			<button type="button" class="cancel" onclick={oncancel}>Cancel</button>
+		{/if}
+		<button type="submit" class="primary">
+			{isEdit ? 'Save changes' : '+ add person'}
+		</button>
+	</div>
 </form>
 
 <style>
@@ -90,8 +117,13 @@
 		outline: none;
 		border-color: var(--color-accent);
 	}
+	.actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--space-2);
+		align-items: center;
+	}
 	button.primary {
-		align-self: flex-start;
 		background: var(--color-accent);
 		color: #1a0a2a;
 		border: none;
@@ -103,5 +135,18 @@
 	}
 	button.primary:hover {
 		filter: brightness(1.1);
+	}
+	button.cancel {
+		background: transparent;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: var(--color-muted);
+		padding: var(--space-2) var(--space-3);
+		border-radius: 4px;
+		cursor: pointer;
+		font: inherit;
+	}
+	button.cancel:hover {
+		color: var(--color-fg);
+		border-color: var(--color-accent);
 	}
 </style>
