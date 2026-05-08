@@ -47,7 +47,9 @@ A spectrum graph plots a position in an N-dimensional labeled coordinate space, 
 
 ### 3.1 Dimensionality
 
-Supported in v1: **N = 1, 2**. **N = 3** is a stretch goal (covered by the Three.js dependency in `STACK.md`); not required for MVP.
+Supported in v1: **N = 1, 2, 3**.
+
+3D graphs are rendered as a 2D scatter on axes 0/1 with the third axis encoded as **colour via a ramp** built from the graph's palette — not as a 3D scene. This avoids loading Three.js, keeps the visualization within the chosen flag/palette aesthetic, and trades one axis of position for one axis of hue. (3D scatter via Three.js is no longer planned for v1; see §10.)
 
 ### 3.2 Axes
 
@@ -123,7 +125,7 @@ How a spectrum graph's history is visualized depends on dimensionality:
 |---|---|
 | 1D | line plot, x = time, y = value |
 | 2D | scatter cloud over the 2D space; optional density/heatmap; optional time-colored trail |
-| 3D | 3D scatter (lazy-loaded Three.js) |
+| 3D | 2D scatter on axes 0/1, with axis 2 encoded as colour via a ramp interpolated over the graph's palette. A colour-bar legend labels the ramp's `min_label`, `max_label`, and `zero_label` (when applicable). |
 
 These are display choices made by the client, not properties stored on the graph. The graph stores datapoints; the client decides how to draw them.
 
@@ -266,7 +268,7 @@ Explicitly deferred (acknowledged but not implemented in MVP):
 - **3D regions.** 3D scatter datapoints are reachable in v1; labeled 3D regions (boxes, volumes) are not.
 - **Network graph history.** Network state is point-in-time in v1.
 - **Per-viewer legend redaction at the crypto level** (single room with selective decryption). Handled instead via redundant rooms — see `sharing_model.md`.
-- **3D point waypoints.** Point waypoints in 2D are supported (§3.3); 3D rendering is deferred along with the rest of 3D rendering.
+- **3D point waypoints.** Point waypoints in 2D are supported (§3.3); 3D point waypoints (placed at `(x, y, z)` and colour-ramped on the 3D scatter) are deferred — the form's waypoint editor is currently 2D-only.
 - **Computed/derived datapoints** (e.g. "averaged over last week"). v1 stores raw points; clients may render rolling averages but don't persist them.
 - **Discrete / categorical spectrum axes.** v1 axes are continuous numeric. A categorical axis option is plausibly v1.1.
 - **Linked-node graph navigation.** Nodes with confirmed `subject_ref` are *named* but not navigable in v1 — clicking them does not surface that user's other graphs. The richer feature (cross-graph navigation gated on the linked user's separate share grants) is a v2 extension.

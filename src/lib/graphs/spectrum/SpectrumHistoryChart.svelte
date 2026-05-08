@@ -1,12 +1,17 @@
 <script lang="ts">
 	import * as d3 from 'd3';
 	import type { SpectrumDatapoint, SpectrumGraph } from '$lib/types.js';
+	import { buildColorRamp, type ColorRamp } from './colorRamp.js';
 
 	let { graph }: { graph: SpectrumGraph } = $props();
 
 	let svgEl: SVGSVGElement;
 
-	const dims = $derived(graph.schema.dimensions === 2 ? { W: 600, H: 600 } : { W: 800, H: 400 });
+	const dims = $derived(
+		graph.schema.dimensions === 2 || graph.schema.dimensions === 3
+			? { W: 720, H: 600 }
+			: { W: 800, H: 400 }
+	);
 
 	$effect(() => {
 		if (!svgEl) return;
@@ -21,6 +26,8 @@
 			render1D(root, g);
 		} else if (g.schema.dimensions === 2) {
 			render2D(root, g);
+		} else if (g.schema.dimensions === 3) {
+			render3D(root, g);
 		} else {
 			root
 				.append('text')
@@ -511,6 +518,315 @@
 			.attr('opacity', (_, i) => 0.35 + 0.65 * (i / Math.max(1, lastIdx)))
 			.attr('stroke', 'var(--color-bg)')
 			.attr('stroke-width', 2);
+	}
+
+	// 3D = 2D scatter where the third axis is encoded as color via a ramp
+	// derived from the graph's palette. A colour-bar legend on the right
+	// labels the ramp's min/zero/max so the value-color mapping is readable.
+	function render3D(root: Selection, g: SpectrumGraph) {
+		const W = 720;
+		const H = 600;
+		// Wide right margin makes room for the colour-bar legend; bottom/left
+		// match render2D so axis labels can breathe past their numeric ticks.
+		const M = { top: 24, right: 140, bottom: 80, left: 80 };
+		const iw = W - M.left - M.right;
+		const ih = H - M.top - M.bottom;
+
+		const inner = root.append('g').attr('transform', `translate(${M.left},${M.top})`);
+
+		const points = [...g.datapoints].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+		const ax0 = g.schema.axes[0];
+		const ax1 = g.schema.axes[1];
+		const ax2 = g.schema.axes[2];
+		const xScale = d3.scaleLinear().domain(ax0.range).range([0, iw]);
+		const yScale = d3.scaleLinear().domain(ax1.range).range([ih, 0]);
+		const ramp = buildColorRamp(g.customization.theme.palette, ax2.range);
+
+		// Plot frame (drawn even when empty so the empty-state message has
+		// context, and so the colour-bar legend doesn't float alone).
+		inner
+			.append('rect')
+			.attr('x', 0)
+			.attr('y', 0)
+			.attr('width', iw)
+			.attr('height', ih)
+			.attr('fill', 'none')
+			.attr('stroke', 'var(--color-muted)')
+			.attr('opacity', 0.5);
+
+		// Numeric axes through zero, drawn early so foreground content sits on
+		// top.
+		const xAxisYpx = clamp(yScale(0), 0, ih);
+		const yAxisXpx = clamp(xScale(0), 0, iw);
+		inner
+			.append('g')
+			.attr('transform', `translate(0,${xAxisYpx})`)
+			.attr('color', 'var(--color-muted)')
+			.call(
+				d3
+					.axisBottom(xScale)
+					.tickValues(signedTickValues(ax0.range[0], ax0.range[1]))
+					.tickSizeOuter(0)
+			);
+		inner
+			.append('g')
+			.attr('transform', `translate(${yAxisXpx},0)`)
+			.attr('color', 'var(--color-muted)')
+			.call(
+				d3
+					.axisLeft(yScale)
+					.tickValues(signedTickValues(ax1.range[0], ax1.range[1]))
+					.tickSizeOuter(0)
+			);
+
+		// Endpoint + zero textual labels — same layout as render2D.
+		inner
+			.append('text')
+			.attr('x', 0)
+			.attr('y', ih + 38)
+			.attr('text-anchor', 'start')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.text(ax0.min_label);
+		inner
+			.append('text')
+			.attr('x', iw)
+			.attr('y', ih + 38)
+			.attr('text-anchor', 'end')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.text(ax0.max_label);
+		if (ax0.zero_label && ax0.range[0] < 0 && ax0.range[1] > 0) {
+			inner
+				.append('text')
+				.attr('x', xScale(0))
+				.attr('y', ih + 38)
+				.attr('text-anchor', 'middle')
+				.attr('fill', 'var(--color-fg)')
+				.attr('font-weight', 'bold')
+				.text(ax0.zero_label);
+		}
+		inner
+			.append('text')
+			.attr('x', -36)
+			.attr('y', ih)
+			.attr('text-anchor', 'end')
+			.attr('dominant-baseline', 'middle')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.text(ax1.min_label);
+		inner
+			.append('text')
+			.attr('x', -36)
+			.attr('y', 0)
+			.attr('text-anchor', 'end')
+			.attr('dominant-baseline', 'middle')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.text(ax1.max_label);
+		if (ax1.zero_label && ax1.range[0] < 0 && ax1.range[1] > 0) {
+			inner
+				.append('text')
+				.attr('x', -36)
+				.attr('y', yScale(0))
+				.attr('text-anchor', 'end')
+				.attr('dominant-baseline', 'middle')
+				.attr('fill', 'var(--color-fg)')
+				.attr('font-weight', 'bold')
+				.text(ax1.zero_label);
+		}
+
+		// Axis names along their respective edges.
+		inner
+			.append('text')
+			.attr('x', iw / 2)
+			.attr('y', ih + 60)
+			.attr('text-anchor', 'middle')
+			.attr('fill', 'var(--color-muted)')
+			.attr('font-size', 11)
+			.text(ax0.name);
+		inner
+			.append('text')
+			.attr('transform', `translate(-64, ${ih / 2}) rotate(-90)`)
+			.attr('text-anchor', 'middle')
+			.attr('fill', 'var(--color-muted)')
+			.attr('font-size', 11)
+			.text(ax1.name);
+
+		// Color-bar legend for axis 2.
+		drawColorBar(root, ramp, ax2, { x: M.left + iw + 30, y: M.top, height: ih });
+
+		if (points.length === 0) {
+			emptyMessage(inner, iw / 2, ih / 2);
+			return;
+		}
+
+		// Per-point color: explicit override > ramp(axis2). Trails interpolate
+		// between adjacent points' colours via per-segment linearGradient.
+		const dpColor = (dp: SpectrumDatapoint) =>
+			dp.color ?? ramp(dp.coordinates[2] ?? ramp.domain[0]);
+
+		const defs = root.append('defs');
+		const gradPrefix = `histgrad3d-${g.id}-`;
+		for (let i = 0; i < points.length - 1; i++) {
+			const a = points[i];
+			const b = points[i + 1];
+			const ax = xScale(a.coordinates[0]);
+			const ay = yScale(a.coordinates[1]);
+			const bx = xScale(b.coordinates[0]);
+			const by = yScale(b.coordinates[1]);
+			const id = `${gradPrefix}${i}`;
+			const grad = defs
+				.append('linearGradient')
+				.attr('id', id)
+				.attr('gradientUnits', 'userSpaceOnUse')
+				.attr('x1', ax)
+				.attr('y1', ay)
+				.attr('x2', bx)
+				.attr('y2', by);
+			grad.append('stop').attr('offset', '0%').attr('stop-color', dpColor(a));
+			grad.append('stop').attr('offset', '100%').attr('stop-color', dpColor(b));
+			inner
+				.append('line')
+				.attr('x1', ax)
+				.attr('y1', ay)
+				.attr('x2', bx)
+				.attr('y2', by)
+				.attr('stroke', `url(#${id})`)
+				.attr('stroke-width', 1.5)
+				.attr('opacity', 0.5);
+		}
+
+		const lastIdx = points.length - 1;
+		inner
+			.selectAll<SVGCircleElement, SpectrumDatapoint>('circle.dp')
+			.data(points)
+			.join('circle')
+			.attr('class', 'dp')
+			.attr('cx', (p) => xScale(p.coordinates[0]))
+			.attr('cy', (p) => yScale(p.coordinates[1]))
+			.attr('r', (_, i) => (i === lastIdx ? 7 : 4))
+			.attr('fill', (p) => dpColor(p))
+			.attr('opacity', (_, i) => 0.45 + 0.55 * (i / Math.max(1, lastIdx)))
+			.attr('stroke', 'var(--color-bg)')
+			.attr('stroke-width', 2);
+
+		// Optional point waypoints, rendered as crosses with their stored
+		// label (no axis-2 colouring — they're explicit landmarks, not data).
+		for (const pw of g.schema.point_waypoints ?? []) {
+			if (pw.coordinates.length < 2) continue;
+			const x = xScale(pw.coordinates[0]);
+			const y = yScale(pw.coordinates[1]);
+			const color = pw.color ?? 'var(--color-muted)';
+			const r = 6;
+			const marker = inner.append('g').attr('opacity', 0.85);
+			marker
+				.append('line')
+				.attr('x1', x - r)
+				.attr('x2', x + r)
+				.attr('y1', y)
+				.attr('y2', y)
+				.attr('stroke', color)
+				.attr('stroke-width', 1.5);
+			marker
+				.append('line')
+				.attr('x1', x)
+				.attr('x2', x)
+				.attr('y1', y - r)
+				.attr('y2', y + r)
+				.attr('stroke', color)
+				.attr('stroke-width', 1.5);
+			marker
+				.append('text')
+				.attr('x', x + r + 4)
+				.attr('y', y)
+				.attr('dominant-baseline', 'middle')
+				.attr('fill', color)
+				.attr('font-size', 11)
+				.text(pw.label);
+		}
+	}
+
+	function drawColorBar(
+		root: Selection,
+		ramp: ColorRamp,
+		axis: SpectrumGraph['schema']['axes'][number],
+		geom: { x: number; y: number; height: number }
+	) {
+		const barWidth = 18;
+		const labelGap = 8;
+		const axisNameGap = 56;
+
+		const defs = root.append('defs');
+		const gradId = `colorbar-${Math.random().toString(36).slice(2, 8)}`;
+		const grad = defs
+			.append('linearGradient')
+			.attr('id', gradId)
+			.attr('x1', 0)
+			.attr('y1', 1)
+			.attr('x2', 0)
+			.attr('y2', 0);
+		for (const stop of ramp.stops) {
+			grad
+				.append('stop')
+				.attr('offset', `${stop.offset * 100}%`)
+				.attr('stop-color', stop.color);
+		}
+
+		const g = root.append('g').attr('transform', `translate(${geom.x},${geom.y})`);
+		g.append('rect')
+			.attr('x', 0)
+			.attr('y', 0)
+			.attr('width', barWidth)
+			.attr('height', geom.height)
+			.attr('fill', `url(#${gradId})`)
+			.attr('stroke', 'var(--color-muted)')
+			.attr('stroke-opacity', 0.4);
+
+		const [min, max] = ramp.domain;
+		const ys = d3.scaleLinear().domain([min, max]).range([geom.height, 0]);
+		g.append('g')
+			.attr('transform', `translate(${barWidth},0)`)
+			.attr('color', 'var(--color-muted)')
+			.call(
+				d3
+					.axisRight(ys)
+					.tickValues(signedTickValues(min, max))
+					.tickSizeOuter(0)
+			);
+
+		// Endpoint textual labels (e.g. axis poles) line up with the bar so
+		// readers can see "min_label corresponds to the bottom hue".
+		g.append('text')
+			.attr('x', barWidth + labelGap + 28)
+			.attr('y', geom.height)
+			.attr('dominant-baseline', 'middle')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.text(axis.min_label);
+		g.append('text')
+			.attr('x', barWidth + labelGap + 28)
+			.attr('y', 0)
+			.attr('dominant-baseline', 'middle')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.text(axis.max_label);
+		if (axis.zero_label && min < 0 && max > 0) {
+			g.append('text')
+				.attr('x', barWidth + labelGap + 28)
+				.attr('y', ys(0))
+				.attr('dominant-baseline', 'middle')
+				.attr('fill', 'var(--color-fg)')
+				.attr('font-weight', 'bold')
+				.text(axis.zero_label);
+		}
+
+		g.append('text')
+			.attr('transform', `translate(${barWidth + axisNameGap + 32}, ${geom.height / 2}) rotate(90)`)
+			.attr('text-anchor', 'middle')
+			.attr('fill', 'var(--color-muted)')
+			.attr('font-size', 11)
+			.text(axis.name);
 	}
 
 	function emptyMessage(

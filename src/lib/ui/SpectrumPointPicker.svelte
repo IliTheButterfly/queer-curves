@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import * as d3 from 'd3';
 	import type { SpectrumDatapoint, SpectrumGraph } from '$lib/types.js';
+	import { buildColorRamp } from '$lib/graphs/spectrum/colorRamp.js';
 
 	let {
 		graph,
@@ -36,12 +37,19 @@
 	let xScale: Linear | undefined;
 	let yScale: Linear | undefined;
 
-	const dims = $derived(graph.schema.dimensions === 2 ? { W: 600, H: 600 } : { W: 800, H: 160 });
+	const dims = $derived(
+		graph.schema.dimensions === 2
+			? { W: 600, H: 600 }
+			: graph.schema.dimensions === 3
+				? { W: 720, H: 600 }
+				: { W: 800, H: 160 }
+	);
 
 	function rebuild() {
 		if (!svgEl) return;
 		if (graph.schema.dimensions === 1) setup1D();
 		else if (graph.schema.dimensions === 2) setup2D();
+		else if (graph.schema.dimensions === 3) setup3D();
 	}
 
 	// Rebuild the picker when the set of historical datapoints changes —
@@ -74,8 +82,19 @@
 		const sel = d3.select(svgEl).select<SVGCircleElement>('circle.marker');
 		if (sel.empty()) return;
 		sel.attr('cx', xs(coordinates[0]));
-		if (graph.schema.dimensions === 2 && ys && coordinates.length > 1) {
+		if (
+			(graph.schema.dimensions === 2 || graph.schema.dimensions === 3) &&
+			ys &&
+			coordinates.length > 1
+		) {
 			sel.attr('cy', ys(coordinates[1]));
+		}
+		if (graph.schema.dimensions === 3 && coordinates.length > 2) {
+			const ax2 = graph.schema.axes[2];
+			if (ax2) {
+				const ramp = buildColorRamp(graph.customization.theme.palette, ax2.range);
+				sel.attr('fill', ramp(coordinates[2]));
+			}
 		}
 	});
 
@@ -535,6 +554,362 @@
 			});
 
 		marker.call(drag);
+	}
+
+	// 3D = 2D pad for (axis 0, axis 1) plus a vertical slider for axis 2 with
+	// the palette ramp painted on the track. The active marker on the pad
+	// mirrors the slider's current colour so the user can read the third
+	// coord visually without checking the slider every time.
+	function setup3D() {
+		const root = d3.select(svgEl);
+		root.selectAll('*').remove();
+
+		const W = 720;
+		const H = 600;
+		// Slider on the right gets its own column; the pad keeps roughly
+		// square proportions so axes 0/1 stay readable.
+		const M = { top: 30, right: 30, bottom: 60, left: 60 };
+		const sliderColumn = 90;
+		const padWidth = W - M.left - M.right - sliderColumn;
+		const ih = H - M.top - M.bottom;
+
+		const inner = root.append('g').attr('transform', `translate(${M.left},${M.top})`);
+
+		const ax0 = graph.schema.axes[0];
+		const ax1 = graph.schema.axes[1];
+		const ax2 = graph.schema.axes[2];
+		const xs: Linear = d3.scaleLinear().domain(ax0.range).range([0, padWidth]);
+		const ys: Linear = d3.scaleLinear().domain(ax1.range).range([ih, 0]);
+		xScale = xs;
+		yScale = ys;
+
+		const ramp = buildColorRamp(graph.customization.theme.palette, ax2.range);
+
+		// --- 2D pad (axes 0/1) — same hit-target + drag-anywhere model as 2D.
+		const frame = inner
+			.append('rect')
+			.attr('x', 0)
+			.attr('y', 0)
+			.attr('width', padWidth)
+			.attr('height', ih)
+			.attr('fill', 'rgba(255,255,255,0.02)')
+			.attr('stroke', 'var(--color-muted)')
+			.attr('stroke-opacity', 0.4)
+			.attr('cursor', 'crosshair');
+		frame.call(
+			d3
+				.drag<SVGRectElement, unknown>()
+				.clickDistance(0)
+				.on('start', (event) => {
+					const x = clamp(event.x, 0, padWidth);
+					const y = clamp(event.y, 0, ih);
+					d3.select(svgEl).select<SVGCircleElement>('circle.marker').attr('cx', x).attr('cy', y);
+				})
+				.on('drag', (event) => {
+					const x = clamp(event.x, 0, padWidth);
+					const y = clamp(event.y, 0, ih);
+					d3.select(svgEl).select<SVGCircleElement>('circle.marker').attr('cx', x).attr('cy', y);
+				})
+				.on('end', (event) => {
+					const x = clamp(event.x, 0, padWidth);
+					const y = clamp(event.y, 0, ih);
+					coordinates = [
+						clamp(xs.invert(x), ax0.range[0], ax0.range[1]),
+						clamp(ys.invert(y), ax1.range[0], ax1.range[1]),
+						coordinates[2] ?? (ax2.range[0] + ax2.range[1]) / 2
+					];
+				})
+		);
+
+		// Axis-waypoint guide lines for axes 0 & 1.
+		for (const wp of ax0.waypoints ?? []) {
+			const x = xs(wp.position);
+			inner
+				.append('line')
+				.attr('x1', x)
+				.attr('x2', x)
+				.attr('y1', 0)
+				.attr('y2', ih)
+				.attr('stroke', wp.color ?? 'var(--color-muted)')
+				.attr('stroke-dasharray', '3 5')
+				.attr('opacity', 0.6)
+				.attr('pointer-events', 'none');
+			inner
+				.append('text')
+				.attr('x', x)
+				.attr('y', -8)
+				.attr('text-anchor', 'middle')
+				.attr('fill', 'var(--color-muted)')
+				.attr('font-size', 11)
+				.attr('pointer-events', 'none')
+				.text(wp.label);
+		}
+		for (const wp of ax1.waypoints ?? []) {
+			const y = ys(wp.position);
+			inner
+				.append('line')
+				.attr('x1', 0)
+				.attr('x2', padWidth)
+				.attr('y1', y)
+				.attr('y2', y)
+				.attr('stroke', wp.color ?? 'var(--color-muted)')
+				.attr('stroke-dasharray', '3 5')
+				.attr('opacity', 0.6)
+				.attr('pointer-events', 'none');
+			inner
+				.append('text')
+				.attr('x', -8)
+				.attr('y', y)
+				.attr('text-anchor', 'end')
+				.attr('dominant-baseline', 'middle')
+				.attr('fill', 'var(--color-muted)')
+				.attr('font-size', 11)
+				.attr('pointer-events', 'none')
+				.text(wp.label);
+		}
+
+		// Endpoint labels for the pad axes.
+		inner
+			.append('text')
+			.attr('x', 0)
+			.attr('y', ih + 22)
+			.attr('text-anchor', 'start')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.attr('pointer-events', 'none')
+			.text(ax0.min_label);
+		inner
+			.append('text')
+			.attr('x', padWidth)
+			.attr('y', ih + 22)
+			.attr('text-anchor', 'end')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.attr('pointer-events', 'none')
+			.text(ax0.max_label);
+		inner
+			.append('text')
+			.attr('x', -8)
+			.attr('y', ih)
+			.attr('text-anchor', 'end')
+			.attr('dominant-baseline', 'middle')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.attr('pointer-events', 'none')
+			.text(ax1.min_label);
+		inner
+			.append('text')
+			.attr('x', -8)
+			.attr('y', 0)
+			.attr('text-anchor', 'end')
+			.attr('dominant-baseline', 'middle')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-weight', 'bold')
+			.attr('pointer-events', 'none')
+			.text(ax1.max_label);
+
+		// History points dimmed under the active marker, coloured by their
+		// recorded axis-2 value via the ramp.
+		const lastIdx = historyPoints.length - 1;
+		for (let i = 0; i < historyPoints.length; i++) {
+			const dp = historyPoints[i];
+			const cx = xs(dp.coordinates[0]);
+			const cy = ys(dp.coordinates[1]);
+			if (cx === undefined || cy === undefined || Number.isNaN(cx) || Number.isNaN(cy)) continue;
+			const color = dp.color ?? ramp(dp.coordinates[2] ?? ramp.domain[0]);
+			const opacity = lastIdx === 0 ? 0.45 : 0.15 + 0.3 * (i / lastIdx);
+			inner
+				.append('circle')
+				.attr('class', 'dp-history')
+				.attr('cx', cx)
+				.attr('cy', cy)
+				.attr('r', 4)
+				.attr('fill', color)
+				.attr('opacity', opacity)
+				.attr('pointer-events', 'none');
+		}
+
+		const cx0 = xs(coordinates[0] ?? 0);
+		const cy0 = ys(coordinates[1] ?? 0);
+		const z0 = coordinates[2] ?? (ax2.range[0] + ax2.range[1]) / 2;
+
+		const marker = inner
+			.append('circle')
+			.attr('class', 'marker')
+			.attr('cx', cx0)
+			.attr('cy', cy0)
+			.attr('r', 11)
+			.attr('fill', ramp(z0))
+			.attr('stroke', 'var(--color-bg)')
+			.attr('stroke-width', 3)
+			.attr('cursor', 'grab')
+			.style('filter', 'drop-shadow(0 2px 5px rgba(0,0,0,0.45))');
+
+		marker.call(
+			d3
+				.drag<SVGCircleElement, unknown>()
+				.on('start', function () {
+					d3.select(this).attr('cursor', 'grabbing');
+				})
+				.on('drag', function (event) {
+					const x = clamp(event.x, 0, padWidth);
+					const y = clamp(event.y, 0, ih);
+					d3.select(this).attr('cx', x).attr('cy', y);
+				})
+				.on('end', function (event) {
+					const x = clamp(event.x, 0, padWidth);
+					const y = clamp(event.y, 0, ih);
+					coordinates = [
+						clamp(xs.invert(x), ax0.range[0], ax0.range[1]),
+						clamp(ys.invert(y), ax1.range[0], ax1.range[1]),
+						coordinates[2] ?? (ax2.range[0] + ax2.range[1]) / 2
+					];
+					d3.select(this).attr('cursor', 'grab');
+				})
+		);
+
+		// --- Axis-2 slider (right column).
+		const sliderX = padWidth + 30;
+		const sliderWidth = 22;
+		const slider = inner.append('g').attr('transform', `translate(${sliderX},0)`);
+		const zScale = d3.scaleLinear().domain(ax2.range).range([ih, 0]);
+
+		const sliderGradId = `picker3d-ramp-${Math.random().toString(36).slice(2, 8)}`;
+		const grad = root
+			.append('defs')
+			.append('linearGradient')
+			.attr('id', sliderGradId)
+			.attr('x1', 0)
+			.attr('y1', 1)
+			.attr('x2', 0)
+			.attr('y2', 0);
+		for (const stop of ramp.stops) {
+			grad
+				.append('stop')
+				.attr('offset', `${stop.offset * 100}%`)
+				.attr('stop-color', stop.color);
+		}
+		const sliderTrack = slider
+			.append('rect')
+			.attr('x', 0)
+			.attr('y', 0)
+			.attr('width', sliderWidth)
+			.attr('height', ih)
+			.attr('fill', `url(#${sliderGradId})`)
+			.attr('stroke', 'var(--color-muted)')
+			.attr('stroke-opacity', 0.4)
+			.attr('cursor', 'crosshair');
+
+		// Slider tick labels (min/zero/max) on the right side.
+		slider
+			.append('g')
+			.attr('transform', `translate(${sliderWidth},0)`)
+			.attr('color', 'var(--color-muted)')
+			.attr('pointer-events', 'none')
+			.call(
+				d3
+					.axisRight(zScale)
+					.tickValues(
+						ax2.range[0] < 0 && ax2.range[1] > 0
+							? [ax2.range[0], 0, ax2.range[1]]
+							: [ax2.range[0], ax2.range[1]]
+					)
+					.tickSizeOuter(0)
+			);
+
+		// Endpoint pole names below/above the slider — clipped to the slider
+		// gutter so they don't drift into the pad.
+		slider
+			.append('text')
+			.attr('x', sliderWidth / 2)
+			.attr('y', ih + 20)
+			.attr('text-anchor', 'middle')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-size', 11)
+			.attr('pointer-events', 'none')
+			.text(ax2.min_label);
+		slider
+			.append('text')
+			.attr('x', sliderWidth / 2)
+			.attr('y', -8)
+			.attr('text-anchor', 'middle')
+			.attr('fill', 'var(--color-fg)')
+			.attr('font-size', 11)
+			.attr('pointer-events', 'none')
+			.text(ax2.max_label);
+
+		// Slider handle: a horizontal bar at the current axis-2 value.
+		const handleY = zScale(z0);
+		const sliderHandle = slider
+			.append('rect')
+			.attr('class', 'z-handle')
+			.attr('x', -4)
+			.attr('y', handleY - 5)
+			.attr('width', sliderWidth + 8)
+			.attr('height', 10)
+			.attr('fill', 'var(--color-bg)')
+			.attr('stroke', 'var(--color-accent)')
+			.attr('stroke-width', 2)
+			.attr('cursor', 'grab');
+
+		function commitZ(yPx: number) {
+			const v = clamp(zScale.invert(yPx), ax2.range[0], ax2.range[1]);
+			coordinates = [
+				coordinates[0] ?? (ax0.range[0] + ax0.range[1]) / 2,
+				coordinates[1] ?? (ax1.range[0] + ax1.range[1]) / 2,
+				v
+			];
+			marker.attr('fill', ramp(v));
+		}
+
+		sliderTrack.call(
+			d3
+				.drag<SVGRectElement, unknown>()
+				.clickDistance(0)
+				.on('start', (event) => {
+					const y = clamp(event.y, 0, ih);
+					sliderHandle.attr('y', y - 5);
+					marker.attr('fill', ramp(zScale.invert(y)));
+				})
+				.on('drag', (event) => {
+					const y = clamp(event.y, 0, ih);
+					sliderHandle.attr('y', y - 5);
+					marker.attr('fill', ramp(zScale.invert(y)));
+				})
+				.on('end', (event) => {
+					const y = clamp(event.y, 0, ih);
+					commitZ(y);
+				})
+		);
+
+		sliderHandle.call(
+			d3
+				.drag<SVGRectElement, unknown>()
+				.on('start', function () {
+					d3.select(this).attr('cursor', 'grabbing');
+				})
+				.on('drag', function (event) {
+					const y = clamp(event.y, 0, ih);
+					d3.select(this).attr('y', y - 5);
+					marker.attr('fill', ramp(zScale.invert(y)));
+				})
+				.on('end', function (event) {
+					const y = clamp(event.y, 0, ih);
+					commitZ(y);
+					d3.select(this).attr('cursor', 'grab');
+				})
+		);
+
+		// Axis-2 name annotated below the pole label.
+		slider
+			.append('text')
+			.attr('x', sliderWidth / 2)
+			.attr('y', ih + 38)
+			.attr('text-anchor', 'middle')
+			.attr('fill', 'var(--color-muted)')
+			.attr('font-size', 10)
+			.attr('pointer-events', 'none')
+			.text(ax2.name);
 	}
 </script>
 

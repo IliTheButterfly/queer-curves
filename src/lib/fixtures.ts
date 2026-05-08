@@ -102,6 +102,56 @@ export const genderfluidFixture: SpectrumGraph = {
 	]
 };
 
+// ─── Mood-energy-attraction: 3D spectrum, third axis as colour ramp ──────────
+
+export const moodEnergyFixture: SpectrumGraph = {
+	id: 'fixture-mood-energy',
+	type: 'spectrum',
+	name: 'mood, energy, and attraction',
+	description:
+		'Two spatial axes (mood × energy) plus an attraction axis encoded as colour on the scatter.',
+	created_at: now,
+	modified_at: now,
+	schema_version: SCHEMA_VERSION,
+	owner: placeholderOwner,
+	editors: [],
+	schema: {
+		dimensions: 3,
+		axes: [
+			{
+				name: 'mood',
+				min_label: 'low',
+				max_label: 'high',
+				range: [-1, 1],
+				zero_label: 'neutral'
+			},
+			{
+				name: 'energy',
+				min_label: 'depleted',
+				max_label: 'energised',
+				range: [-1, 1],
+				zero_label: 'baseline'
+			},
+			{
+				name: 'attraction',
+				min_label: 'ace',
+				max_label: 'demi',
+				range: [0, 1]
+			}
+		],
+		regions: []
+	},
+	customization: {
+		theme: baseTheme,
+		title: { show: true, text: 'mood, energy, and attraction' }
+	},
+	datapoints: [
+		{ id: 'dp-1', coordinates: [-0.4, -0.3, 0.2], timestamp: '2026-05-01T10:00:00Z' },
+		{ id: 'dp-2', coordinates: [0.1, 0.2, 0.45], timestamp: '2026-05-03T18:00:00Z' },
+		{ id: 'dp-3', coordinates: [0.5, 0.6, 0.7], timestamp: '2026-05-06T09:30:00Z' }
+	]
+};
+
 // ─── Polycule: network (data_model.md §11.3) ────────────────────────────────
 
 export const polyculeFixture: NetworkGraph = {
@@ -154,6 +204,7 @@ export const polyculeRedactedFixture: NetworkGraph = {
 export const allFixtures = [
 	acefluxFixture,
 	genderfluidFixture,
+	moodEnergyFixture,
 	polyculeFixture,
 	polyculeRedactedFixture
 ];

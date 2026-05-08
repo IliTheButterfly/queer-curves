@@ -43,14 +43,22 @@
 	let type = $state<GraphType>(untrack(() => initial?.type ?? 'spectrum'));
 	let name = $state(untrack(() => initial?.name ?? ''));
 	let description = $state(untrack(() => initial?.description ?? ''));
-	let dimensions = $state<1 | 2>(
-		untrack(() => (initial?.type === 'spectrum' && initial.schema.dimensions === 2 ? 2 : 1))
+	let dimensions = $state<1 | 2 | 3>(
+		untrack(() => {
+			if (initial?.type === 'spectrum') {
+				const d = initial.schema.dimensions;
+				if (d === 2 || d === 3) return d;
+			}
+			return 1;
+		})
 	);
 
 	function initialAxes(): Axis[] {
 		if (initial?.type === 'spectrum') {
 			const padded = initial.schema.axes.map(cloneAxis);
-			while (padded.length < 2) {
+			// Pad to 3 so switching dimensions up to 3D doesn't lose user
+			// edits made on the third axis fieldset.
+			while (padded.length < 3) {
 				padded.push({
 					name: `axis ${padded.length + 1}`,
 					min_label: '',
@@ -63,7 +71,8 @@
 		}
 		return [
 			{ name: 'axis 1', min_label: '', max_label: '', range: [0, 1], waypoints: [] },
-			{ name: 'axis 2', min_label: '', max_label: '', range: [0, 1], waypoints: [] }
+			{ name: 'axis 2', min_label: '', max_label: '', range: [0, 1], waypoints: [] },
+			{ name: 'axis 3', min_label: '', max_label: '', range: [0, 1], waypoints: [] }
 		];
 	}
 
@@ -396,6 +405,10 @@
 					<input type="radio" bind:group={dimensions} value={2} />
 					<span><strong>2D</strong> <small>two-axis plane</small></span>
 				</label>
+				<label class="radio compact">
+					<input type="radio" bind:group={dimensions} value={3} />
+					<span><strong>3D</strong> <small>third axis encoded as colour on the 2D plane</small></span>
+				</label>
 			{/if}
 		</fieldset>
 
@@ -469,15 +482,22 @@
 			{/if}
 		{/each}
 
-		<fieldset class="regions-fieldset">
-			<legend>Regions</legend>
-			<RegionEditor
-				bind:regions
-				axes={activeAxes}
-				defaultColor={selectedPalette.colors[0] ?? '#c98aff'}
-				paletteColors={selectedPalette.colors}
-			/>
-		</fieldset>
+		{#if dimensions !== 3}
+			<fieldset class="regions-fieldset">
+				<legend>Regions</legend>
+				<RegionEditor
+					bind:regions
+					axes={activeAxes}
+					defaultColor={selectedPalette.colors[0] ?? '#c98aff'}
+					paletteColors={selectedPalette.colors}
+				/>
+			</fieldset>
+		{:else}
+			<p class="hint">
+				Regions in 3D are deferred — for v1, use point waypoints or per-datapoint colors to
+				annotate the colour-ramped scatter.
+			</p>
+		{/if}
 
 		{#if dimensions === 2}
 			<fieldset class="point-waypoints-fieldset">
