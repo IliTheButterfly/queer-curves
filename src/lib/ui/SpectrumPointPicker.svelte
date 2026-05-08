@@ -1,10 +1,34 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import * as d3 from 'd3';
-	import type { SpectrumGraph } from '$lib/types.js';
+	import type { SpectrumDatapoint, SpectrumGraph } from '$lib/types.js';
 
-	let { graph, coordinates = $bindable() }: { graph: SpectrumGraph; coordinates: number[] } =
-		$props();
+	let {
+		graph,
+		coordinates = $bindable(),
+		excludeDatapointId
+	}: {
+		graph: SpectrumGraph;
+		coordinates: number[];
+		// When editing an existing datapoint, omit it from the rendered history
+		// so the active marker isn't doubled up by a static dot.
+		excludeDatapointId?: string;
+	} = $props();
+
+	const historyPoints = $derived(
+		[...graph.datapoints]
+			.filter((dp) => dp.id !== excludeDatapointId)
+			.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+	);
+
+	// Per-point color: explicit override wins; otherwise cycle through the
+	// palette by time-order index so the user can read progression by hue.
+	function colorOf(dp: SpectrumDatapoint, idx: number): string {
+		if (dp.color) return dp.color;
+		const palette = graph.customization.theme.palette;
+		if (!palette || palette.length === 0) return '#c98aff';
+		return palette[idx % palette.length];
+	}
 
 	let svgEl: SVGSVGElement;
 
@@ -14,9 +38,30 @@
 
 	const dims = $derived(graph.schema.dimensions === 2 ? { W: 600, H: 600 } : { W: 800, H: 160 });
 
-	onMount(() => {
+	function rebuild() {
+		if (!svgEl) return;
 		if (graph.schema.dimensions === 1) setup1D();
 		else if (graph.schema.dimensions === 2) setup2D();
+	}
+
+	// Rebuild the picker when the set of historical datapoints changes —
+	// otherwise a freshly-committed point doesn't show up in the dimmed
+	// history until the form is closed and reopened. Keyed off length plus
+	// dimension so the same effect handles dim flips too.
+	const datapointsKey = $derived(`${graph.datapoints.length}|${graph.schema.dimensions}`);
+	const lastSetupKey: { current: string } = { current: '' };
+	$effect(() => {
+		if (!svgEl) return;
+		if (datapointsKey === lastSetupKey.current) return;
+		lastSetupKey.current = datapointsKey;
+		rebuild();
+	});
+
+	onMount(() => {
+		if (svgEl) {
+			lastSetupKey.current = datapointsKey;
+			rebuild();
+		}
 	});
 
 	// External coordinate changes (e.g. parent form reset) move the marker.
@@ -56,19 +101,33 @@
 
 		const lineY = ih / 2;
 
-		// Click target — covers the whole interactive area, teleports the marker.
-		inner
+		// Hit target — covers the whole interactive area. Press anywhere to
+		// teleport the marker; drag continues to move it without lifting.
+		const hitTarget = inner
 			.append('rect')
 			.attr('x', 0)
 			.attr('y', 0)
 			.attr('width', iw)
 			.attr('height', ih)
 			.attr('fill', 'transparent')
-			.attr('cursor', 'crosshair')
-			.on('click', (event) => {
-				const [x] = d3.pointer(event);
-				coordinates = [clamp(xs.invert(x), axis.range[0], axis.range[1])];
-			});
+			.attr('cursor', 'crosshair');
+		hitTarget.call(
+			d3
+				.drag<SVGRectElement, unknown>()
+				.clickDistance(0)
+				.on('start', (event) => {
+					const x = clamp(event.x, 0, iw);
+					d3.select(svgEl).select<SVGCircleElement>('circle.marker').attr('cx', x);
+				})
+				.on('drag', (event) => {
+					const x = clamp(event.x, 0, iw);
+					d3.select(svgEl).select<SVGCircleElement>('circle.marker').attr('cx', x);
+				})
+				.on('end', (event) => {
+					const x = clamp(event.x, 0, iw);
+					coordinates = [clamp(xs.invert(x), axis.range[0], axis.range[1])];
+				})
+		);
 
 		// Regions render under the line as a band centered on it.
 		for (const r of graph.schema.regions) {
@@ -150,6 +209,25 @@
 
 		const seriesColor = graph.customization.theme.palette[0] ?? '#c98aff';
 
+		// Existing datapoints, dimmed and time-ramped (older = fainter). Each
+		// point uses its explicit color or the next palette slot.
+		const lastIdx = historyPoints.length - 1;
+		for (let i = 0; i < historyPoints.length; i++) {
+			const dp = historyPoints[i];
+			const cx = xs(dp.coordinates[0]);
+			if (cx === undefined || Number.isNaN(cx)) continue;
+			const opacity = lastIdx === 0 ? 0.45 : 0.15 + 0.3 * (i / lastIdx);
+			inner
+				.append('circle')
+				.attr('class', 'dp-history')
+				.attr('cx', cx)
+				.attr('cy', lineY)
+				.attr('r', 5)
+				.attr('fill', colorOf(dp, i))
+				.attr('opacity', opacity)
+				.attr('pointer-events', 'none');
+		}
+
 		const marker = inner
 			.append('circle')
 			.attr('class', 'marker')
@@ -203,8 +281,9 @@
 		xScale = xs;
 		yScale = ys;
 
-		// Plot frame doubles as click target.
-		inner
+		// Plot frame doubles as the hit target. Press anywhere to teleport
+		// the marker; drag continues to move it without lifting.
+		const frame = inner
 			.append('rect')
 			.attr('x', 0)
 			.attr('y', 0)
@@ -213,14 +292,30 @@
 			.attr('fill', 'rgba(255,255,255,0.02)')
 			.attr('stroke', 'var(--color-muted)')
 			.attr('stroke-opacity', 0.4)
-			.attr('cursor', 'crosshair')
-			.on('click', (event) => {
-				const [x, y] = d3.pointer(event);
-				coordinates = [
-					clamp(xs.invert(x), ax0.range[0], ax0.range[1]),
-					clamp(ys.invert(y), ax1.range[0], ax1.range[1])
-				];
-			});
+			.attr('cursor', 'crosshair');
+		frame.call(
+			d3
+				.drag<SVGRectElement, unknown>()
+				.clickDistance(0)
+				.on('start', (event) => {
+					const x = clamp(event.x, 0, iw);
+					const y = clamp(event.y, 0, ih);
+					d3.select(svgEl).select<SVGCircleElement>('circle.marker').attr('cx', x).attr('cy', y);
+				})
+				.on('drag', (event) => {
+					const x = clamp(event.x, 0, iw);
+					const y = clamp(event.y, 0, ih);
+					d3.select(svgEl).select<SVGCircleElement>('circle.marker').attr('cx', x).attr('cy', y);
+				})
+				.on('end', (event) => {
+					const x = clamp(event.x, 0, iw);
+					const y = clamp(event.y, 0, ih);
+					coordinates = [
+						clamp(xs.invert(x), ax0.range[0], ax0.range[1]),
+						clamp(ys.invert(y), ax1.range[0], ax1.range[1])
+					];
+				})
+		);
 
 		for (const r of graph.schema.regions) {
 			if (r.shape.type === 'box') {
@@ -345,6 +440,65 @@
 			.text(ax1.max_label);
 
 		const seriesColor = graph.customization.theme.palette[0] ?? '#c98aff';
+
+		// Existing datapoints, dimmed and time-ramped (older = fainter), with
+		// a per-segment color-fading trail to convey trajectory direction. The
+		// trail uses straight segments so a per-segment <linearGradient> can
+		// interpolate cleanly between adjacent point colors.
+		const lastIdx = historyPoints.length - 1;
+		if (historyPoints.length > 1) {
+			const defs = root.append('defs');
+			const gradPrefix = `pickgrad-${Math.random().toString(36).slice(2, 8)}-`;
+			for (let i = 0; i < historyPoints.length - 1; i++) {
+				const a = historyPoints[i];
+				const b = historyPoints[i + 1];
+				const ax = xs(a.coordinates[0]);
+				const ay = ys(a.coordinates[1]);
+				const bx = xs(b.coordinates[0]);
+				const by = ys(b.coordinates[1]);
+				const id = `${gradPrefix}${i}`;
+				const grad = defs
+					.append('linearGradient')
+					.attr('id', id)
+					.attr('gradientUnits', 'userSpaceOnUse')
+					.attr('x1', ax)
+					.attr('y1', ay)
+					.attr('x2', bx)
+					.attr('y2', by);
+				grad.append('stop').attr('offset', '0%').attr('stop-color', colorOf(a, i));
+				grad
+					.append('stop')
+					.attr('offset', '100%')
+					.attr('stop-color', colorOf(b, i + 1));
+				inner
+					.append('line')
+					.attr('x1', ax)
+					.attr('y1', ay)
+					.attr('x2', bx)
+					.attr('y2', by)
+					.attr('stroke', `url(#${id})`)
+					.attr('stroke-width', 1.5)
+					.attr('opacity', 0.4)
+					.attr('pointer-events', 'none');
+			}
+		}
+		for (let i = 0; i < historyPoints.length; i++) {
+			const dp = historyPoints[i];
+			const cx = xs(dp.coordinates[0]);
+			const cy = ys(dp.coordinates[1]);
+			if (cx === undefined || cy === undefined || Number.isNaN(cx) || Number.isNaN(cy)) continue;
+			const opacity = lastIdx === 0 ? 0.45 : 0.15 + 0.3 * (i / lastIdx);
+			inner
+				.append('circle')
+				.attr('class', 'dp-history')
+				.attr('cx', cx)
+				.attr('cy', cy)
+				.attr('r', 4)
+				.attr('fill', colorOf(dp, i))
+				.attr('opacity', opacity)
+				.attr('pointer-events', 'none');
+		}
+
 		const cx0 = xs(coordinates[0] ?? 0);
 		const cy0 = ys(coordinates[1] ?? 0);
 

@@ -6,6 +6,7 @@
 		type EdgeType,
 		type Graph,
 		type NetworkGraph,
+		type PointWaypoint,
 		type Region,
 		type SpectrumGraph
 	} from '$lib/types.js';
@@ -72,7 +73,8 @@
 			min_label: a.min_label,
 			max_label: a.max_label,
 			range: [a.range[0], a.range[1]],
-			waypoints: a.waypoints?.map((w) => ({ ...w })) ?? []
+			waypoints: a.waypoints?.map((w) => ({ ...w })) ?? [],
+			zero_label: a.zero_label
 		};
 	}
 
@@ -81,6 +83,52 @@
 	let regions = $state<Region[]>(
 		untrack(() => (initial?.type === 'spectrum' ? initial.schema.regions.map(cloneRegion) : []))
 	);
+
+	// Form-state shape: color is always defined here so we can `bind:value`
+	// to it. On save we strip the field before persisting so the schema's
+	// optional-color semantics are preserved.
+	type EditablePointWaypoint = {
+		id: string;
+		label: string;
+		coordinates: number[];
+		color: string;
+	};
+
+	let pointWaypoints = $state<EditablePointWaypoint[]>(
+		untrack(() =>
+			initial?.type === 'spectrum'
+				? (initial.schema.point_waypoints ?? []).map((p) => ({
+						id: p.id,
+						label: p.label,
+						coordinates: [...p.coordinates],
+						color: p.color ?? '#c98aff'
+					}))
+				: []
+		)
+	);
+
+	function newPointWaypointId(): string {
+		return `pwp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+	}
+
+	function addPointWaypoint() {
+		const ax0 = axes[0];
+		const ax1 = axes[1];
+		const mid0 = (ax0.range[0] + ax0.range[1]) / 2;
+		const mid1 = (ax1.range[0] + ax1.range[1]) / 2;
+		const palette = selectedPalette.colors;
+		const defaultColor = palette[pointWaypoints.length % palette.length] ?? '#c98aff';
+		pointWaypoints.push({
+			id: newPointWaypointId(),
+			label: '',
+			coordinates: [mid0, mid1],
+			color: defaultColor
+		});
+	}
+
+	function removePointWaypoint(idx: number) {
+		pointWaypoints = pointWaypoints.filter((_, i) => i !== idx);
+	}
 
 	function cloneRegion(r: Region): Region {
 		// Deep clone the shape to keep the form's edits isolated from the
@@ -172,16 +220,48 @@
 		const colors = selectedPalette.colors;
 
 		if (type === 'spectrum') {
-			const cleanedAxes = axes.slice(0, dimensions).map((a) => ({
-				...a,
-				waypoints: a.waypoints?.filter((w) => w.label.trim() !== '')
-			}));
+			const cleanedAxes = axes.slice(0, dimensions).map((a) => {
+				const out: Axis = {
+					...a,
+					waypoints: a.waypoints?.filter((w) => w.label.trim() !== '')
+				};
+				// Drop zero_label if it's empty or no longer relevant (range
+				// doesn't straddle zero). Keeps saved data tidy and prevents
+				// stale labels from re-appearing if the user later signs the
+				// axis again with a new label in mind.
+				const trimmed = a.zero_label?.trim();
+				if (!trimmed || a.range[0] >= 0 || a.range[1] <= 0) delete out.zero_label;
+				else out.zero_label = trimmed;
+				return out;
+			});
 			const validRegions = regions.filter((r) => {
 				if (r.label.trim() === '') return false;
 				if (dimensions === 1) return r.shape.type === 'range';
 				if (dimensions === 2) return r.shape.type === 'box' || r.shape.type === 'polygon';
 				return false;
 			});
+			// 2D-only feature; drop them silently if dimensions changed back
+			// to 1D rather than letting stale points leak into the saved graph.
+			const validPointWaypoints: PointWaypoint[] | undefined =
+				dimensions === 2
+					? pointWaypoints
+							.filter((p) => p.label.trim() !== '')
+							.map((p) => ({
+								id: p.id,
+								label: p.label,
+								coordinates: [...p.coordinates],
+								color: p.color
+							}))
+					: undefined;
+
+			const spectrumSchema = {
+				dimensions,
+				axes: cleanedAxes,
+				regions: validRegions,
+				...(validPointWaypoints && validPointWaypoints.length > 0
+					? { point_waypoints: validPointWaypoints }
+					: {})
+			};
 
 			if (initial?.type === 'spectrum') {
 				return {
@@ -190,7 +270,7 @@
 					description: description || undefined,
 					modified_at: now,
 					schema_version: SCHEMA_VERSION,
-					schema: { dimensions, axes: cleanedAxes, regions: validRegions },
+					schema: spectrumSchema,
 					customization: {
 						...initial.customization,
 						theme: { ...initial.customization.theme, palette: colors },
@@ -209,7 +289,7 @@
 				schema_version: SCHEMA_VERSION,
 				owner: '@local:queer-curves',
 				editors: [],
-				schema: { dimensions, axes: cleanedAxes, regions: validRegions },
+				schema: spectrumSchema,
 				customization: {
 					theme: { palette: colors },
 					title: { show: true, text: name }
@@ -340,13 +420,25 @@
 					<div class="row">
 						<label class="field">
 							<span class="label">Range min</span>
-							<input type="number" step="0.01" bind:value={axis.range[0]} />
+							<input type="number" step="any" bind:value={axis.range[0]} />
 						</label>
 						<label class="field">
 							<span class="label">Range max</span>
-							<input type="number" step="0.01" bind:value={axis.range[1]} />
+							<input type="number" step="any" bind:value={axis.range[1]} />
 						</label>
 					</div>
+					{#if axis.range[0] < 0 && axis.range[1] > 0}
+						<label class="field">
+							<span class="label">
+								Zero label <small>(optional — names the neutral midpoint)</small>
+							</span>
+							<input
+								type="text"
+								bind:value={axis.zero_label}
+								placeholder="e.g. neutral, none"
+							/>
+						</label>
+					{/if}
 					<div class="waypoints">
 						<div class="waypoints-header">
 							<span class="label">Waypoints</span>
@@ -356,7 +448,7 @@
 							<div class="waypoint-row">
 								<input
 									type="number"
-									step="0.01"
+									step="any"
 									bind:value={wp.position}
 									placeholder="position"
 									class="position"
@@ -386,6 +478,57 @@
 				paletteColors={selectedPalette.colors}
 			/>
 		</fieldset>
+
+		{#if dimensions === 2}
+			<fieldset class="point-waypoints-fieldset">
+				<legend>2D waypoints</legend>
+				<p class="hint">
+					Labelled landmarks at a specific (x, y) — e.g. "gendervoid" at (0.2, 0.3). Drawn as
+					crosses on the chart to stay distinct from datapoints.
+				</p>
+				{#each pointWaypoints as pw, i (pw.id)}
+					<div class="pwp-row">
+						<input
+							type="text"
+							bind:value={pw.label}
+							placeholder="label (e.g. gendervoid)"
+							maxlength="60"
+							class="pwp-label"
+						/>
+						<input
+							type="number"
+							step="any"
+							bind:value={pw.coordinates[0]}
+							placeholder="{axes[0]?.name ?? 'x'}"
+							class="pwp-coord"
+							aria-label="{axes[0]?.name ?? 'x'} coordinate"
+						/>
+						<input
+							type="number"
+							step="any"
+							bind:value={pw.coordinates[1]}
+							placeholder="{axes[1]?.name ?? 'y'}"
+							class="pwp-coord"
+							aria-label="{axes[1]?.name ?? 'y'} coordinate"
+						/>
+						<ColorPickerWithPalette
+							bind:value={pointWaypoints[i].color}
+							paletteColors={selectedPalette.colors}
+							ariaLabel="waypoint colour"
+						/>
+						<button
+							type="button"
+							class="ghost remove"
+							onclick={() => removePointWaypoint(i)}
+							aria-label="remove waypoint"
+						>
+							×
+						</button>
+					</div>
+				{/each}
+				<button type="button" class="ghost" onclick={addPointWaypoint}>+ add waypoint</button>
+			</fieldset>
+		{/if}
 	{:else}
 		<fieldset>
 			<legend>Edge types</legend>
@@ -583,6 +726,28 @@
 		padding: var(--space-2);
 		border-radius: 4px;
 		font: inherit;
+	}
+
+	.pwp-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 90px 90px auto auto;
+		gap: var(--space-2);
+		align-items: center;
+	}
+	.pwp-row input {
+		background: rgba(0, 0, 0, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-fg);
+		padding: var(--space-1) var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+	}
+	.pwp-row input:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+	.pwp-coord {
+		width: 100%;
 	}
 
 	.hint {

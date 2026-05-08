@@ -118,6 +118,28 @@
 		} satisfies NetworkGraph);
 	}
 
+	async function handleNetworkPositions(positions: Record<string, { x: number; y: number }>) {
+		if (graph.type !== 'network') return;
+		// Skip persistence when nothing meaningfully changed (e.g. tiny
+		// floating-point jitter). Saves a round-trip when a drag ends without
+		// movement.
+		const changed = graph.nodes.some((n) => {
+			const p = positions[n.id];
+			if (!p) return false;
+			if (!n.position) return true;
+			return n.position.x !== p.x || n.position.y !== p.y;
+		});
+		if (!changed) return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			nodes: graph.nodes.map((n) => {
+				const p = positions[n.id];
+				return p ? { ...n, position: { x: p.x, y: p.y } } : n;
+			})
+		} satisfies NetworkGraph);
+	}
+
 	async function handleDelete() {
 		if (!confirm(`Delete "${graph.name}"? This can't be undone.`)) return;
 		deleteUserGraph(graph.id);
@@ -161,7 +183,7 @@
 		{#if graph.type === 'spectrum'}
 			<SpectrumHistoryChart {graph} />
 		{:else}
-			<NetworkChart {graph} />
+			<NetworkChart {graph} onPositionsChange={handleNetworkPositions} />
 		{/if}
 	</div>
 

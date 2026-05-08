@@ -84,7 +84,10 @@ export const genderfluidFixture: SpectrumGraph = {
 				waypoints: [{ position: 0.5, label: 'girl' }]
 			}
 		],
-		regions: []
+		regions: [],
+		point_waypoints: [
+			{ id: 'pwp-gendervoid', label: 'gendervoid', coordinates: [0.2, 0.3], color: '#998aaa' }
+		]
 	},
 	customization: {
 		theme: baseTheme,
@@ -93,7 +96,9 @@ export const genderfluidFixture: SpectrumGraph = {
 	datapoints: [
 		{ id: 'dp-1', coordinates: [0.3, 0.7], timestamp: '2026-05-01T10:00:00Z' },
 		{ id: 'dp-2', coordinates: [0.4, 0.6], timestamp: '2026-05-04T22:00:00Z' },
-		{ id: 'dp-3', coordinates: [0.5, 0.55], timestamp: '2026-05-06T09:30:00Z' }
+		// Custom color demo — overrides the default palette-cycle slot for
+		// this datapoint specifically.
+		{ id: 'dp-3', coordinates: [0.5, 0.55], timestamp: '2026-05-06T09:30:00Z', color: '#ff8aa8' }
 	]
 };
 

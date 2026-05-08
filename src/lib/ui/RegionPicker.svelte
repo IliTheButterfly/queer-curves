@@ -3,7 +3,24 @@
 	import * as d3 from 'd3';
 	import type { Axis, Region } from '$lib/types.js';
 
-	let { region = $bindable(), axes }: { region: Region; axes: Axis[] } = $props();
+	let {
+		region = $bindable(),
+		axes,
+		selectedVertexIdx = null,
+		onSelectedVertexChange
+	}: {
+		region: Region;
+		axes: Axis[];
+		// For polygon regions, the index of the vertex the user has clicked
+		// on (null when nothing is selected). The parent owns the storage
+		// (so it can key by region id) and gets notified via the callback.
+		selectedVertexIdx?: number | null;
+		onSelectedVertexChange?: (idx: number | null) => void;
+	} = $props();
+
+	function setSelectedVertex(idx: number | null) {
+		onSelectedVertexChange?.(idx);
+	}
 
 	let svgEl: SVGSVGElement;
 
@@ -27,6 +44,27 @@
 	// gate variable itself to participate in Svelte's reactivity.
 	const lastKeyRef: { current: string } = { current: '' };
 
+	// Polygon-only handles to whatever setupPolygon produced — used by the
+	// top-level coord-sync and selection effects below so external edits to
+	// vertex coords or selection move the on-screen handles without rebuilding
+	// the whole SVG.
+	type PolygonRefs = {
+		handles: d3.Selection<SVGCircleElement, unknown, null, undefined>[];
+		halo: d3.Selection<SVGCircleElement, unknown, null, undefined>;
+		path: d3.Selection<SVGPathElement, unknown, null, undefined>;
+		xs: d3.ScaleLinear<number, number>;
+		ys: d3.ScaleLinear<number, number>;
+	};
+	const polyRefs: { current: PolygonRefs | null } = { current: null };
+
+	type BoxRefs = {
+		rect: d3.Selection<SVGRectElement, unknown, null, undefined>;
+		handles: { cornerX: 'min' | 'max'; cornerY: 'min' | 'max'; el: d3.Selection<SVGCircleElement, unknown, null, undefined> }[];
+		xs: d3.ScaleLinear<number, number>;
+		ys: d3.ScaleLinear<number, number>;
+	};
+	const boxRefs: { current: BoxRefs | null } = { current: null };
+
 	$effect(() => {
 		if (!svgEl) return;
 		if (structuralKey === lastKeyRef.current) return;
@@ -41,10 +79,86 @@
 		}
 	});
 
+	// Coord-sync: when the editor's input fields change vertex coords we
+	// don't rebuild (the structural key didn't change), so reposition handles
+	// imperatively instead. Drag handlers don't write coords mid-drag, so
+	// this won't fight live drags.
+	const polyVertsKey = $derived(
+		region.shape.type === 'polygon'
+			? region.shape.vertices.map((v) => `${v[0]},${v[1]}`).join('|')
+			: ''
+	);
+	$effect(() => {
+		void polyVertsKey;
+		const refs = polyRefs.current;
+		if (!refs || region.shape.type !== 'polygon') return;
+		const verts = region.shape.vertices;
+		if (refs.handles.length !== verts.length) return;
+		for (let i = 0; i < verts.length; i++) {
+			refs.handles[i].attr('cx', refs.xs(verts[i][0])).attr('cy', refs.ys(verts[i][1]));
+		}
+		const pts = verts.map(([x, y]) => `${refs.xs(x)},${refs.ys(y)}`);
+		refs.path.attr('d', `M ${pts.join(' L ')} Z`);
+		updateHaloFromState();
+	});
+
+	$effect(() => {
+		void selectedVertexIdx;
+		updateHaloFromState();
+	});
+
+	function updateHaloFromState() {
+		const refs = polyRefs.current;
+		if (!refs || region.shape.type !== 'polygon') return;
+		if (
+			selectedVertexIdx == null ||
+			selectedVertexIdx < 0 ||
+			selectedVertexIdx >= region.shape.vertices.length
+		) {
+			refs.halo.attr('opacity', 0);
+			return;
+		}
+		const v = region.shape.vertices[selectedVertexIdx];
+		refs.halo.attr('cx', refs.xs(v[0])).attr('cy', refs.ys(v[1])).attr('opacity', 1);
+	}
+
+	// Coord-sync for box regions: when the editor's input fields write new
+	// min/max, reposition the rect and the four corner handles without
+	// rebuilding the SVG.
+	const boxKey = $derived(
+		region.shape.type === 'box'
+			? `${region.shape.min[0]},${region.shape.min[1]},${region.shape.max[0]},${region.shape.max[1]}`
+			: ''
+	);
+	$effect(() => {
+		void boxKey;
+		const refs = boxRefs.current;
+		if (!refs || region.shape.type !== 'box') return;
+		const shape = region.shape;
+		const xLo = Math.min(shape.min[0], shape.max[0]);
+		const xHi = Math.max(shape.min[0], shape.max[0]);
+		const yLo = Math.min(shape.min[1], shape.max[1]);
+		const yHi = Math.max(shape.min[1], shape.max[1]);
+		refs.rect
+			.attr('x', refs.xs(xLo))
+			.attr('y', refs.ys(yHi))
+			.attr('width', refs.xs(xHi) - refs.xs(xLo))
+			.attr('height', refs.ys(yLo) - refs.ys(yHi));
+		for (const h of refs.handles) {
+			const cx = h.cornerX === 'min' ? refs.xs(shape.min[0]) : refs.xs(shape.max[0]);
+			const cy = h.cornerY === 'min' ? refs.ys(shape.min[1]) : refs.ys(shape.max[1]);
+			h.el.attr('cx', cx).attr('cy', cy);
+		}
+	});
+
 	function setup() {
 		if (!svgEl) return;
 		const root = d3.select(svgEl);
 		root.selectAll('*').remove();
+		// Drop any prior shape-specific refs — the active shape's setup will
+		// repopulate, while inactive coord-sync effects bail out on null refs.
+		polyRefs.current = null;
+		boxRefs.current = null;
 		if (region.shape.type === 'range') setupRange();
 		else if (region.shape.type === 'box') setupBox();
 		else if (region.shape.type === 'polygon') setupPolygon();
@@ -437,6 +551,17 @@
 			return { c, handle };
 		});
 
+		boxRefs.current = {
+			rect,
+			handles: cornerHandles.map(({ c, handle }) => ({
+				cornerX: c.cornerX,
+				cornerY: c.cornerY,
+				el: handle
+			})),
+			xs,
+			ys
+		};
+
 		function updateCornerPositions(xLo: number, yLo: number, xHi: number, yHi: number) {
 			for (const { c, handle } of cornerHandles) {
 				const x = c.cornerX === 'min' ? xs(xLo) : xs(xHi);
@@ -524,8 +649,9 @@
 		const xs = d3.scaleLinear().domain(ax0.range).range([0, iw]);
 		const ys = d3.scaleLinear().domain(ax1.range).range([ih, 0]);
 
-		// Plot frame doubles as a click target — click anywhere to insert a
-		// new vertex on the nearest edge, at the click position.
+		// Plot frame doubles as the add-vertex target — press, optionally drag,
+		// then release. A static click still inserts at the press position
+		// because d3.drag fires start/end even with zero movement.
 		const frame = inner
 			.append('rect')
 			.attr('x', 0)
@@ -537,29 +663,100 @@
 			.attr('stroke-opacity', 0.3)
 			.attr('cursor', 'crosshair');
 
-		frame.on('click', (event) => {
-			const [px, py] = d3.pointer(event);
-			const verts = shape.vertices;
-			let bestIdx = 0;
-			let bestDist = Infinity;
-			for (let i = 0; i < verts.length; i++) {
-				const a = verts[i];
-				const b = verts[(i + 1) % verts.length];
-				const d = pointToSegmentDistPx(px, py, xs(a[0]), ys(a[1]), xs(b[0]), ys(b[1]));
-				if (d < bestDist) {
-					bestDist = d;
-					bestIdx = i;
+		// Mid-drag visuals — committed on 'end' so the structural rebuild
+		// only fires once and doesn't tear down the d3.drag mid-gesture.
+		let pendingIdx = -1;
+		let pendingGhost: d3.Selection<SVGCircleElement, unknown, null, undefined> | null = null;
+		let pendingGhostPath: d3.Selection<SVGPathElement, unknown, null, undefined> | null = null;
+
+		const insertDrag = d3
+			.drag<SVGRectElement, unknown>()
+			.clickDistance(0)
+			.on('start', function (event) {
+				const px = clamp(event.x, 0, iw);
+				const py = clamp(event.y, 0, ih);
+				const verts = shape.vertices;
+				let bestIdx = 0;
+				let bestDist = Infinity;
+				for (let i = 0; i < verts.length; i++) {
+					const a = verts[i];
+					const b = verts[(i + 1) % verts.length];
+					const d = pointToSegmentDistPx(px, py, xs(a[0]), ys(a[1]), xs(b[0]), ys(b[1]));
+					if (d < bestDist) {
+						bestDist = d;
+						bestIdx = i;
+					}
 				}
+				pendingIdx = bestIdx;
+				pendingGhost = inner
+					.append('circle')
+					.attr('class', 'vertex-ghost')
+					.attr('cx', px)
+					.attr('cy', py)
+					.attr('r', 7)
+					.attr('fill', region.color)
+					.attr('stroke', 'var(--color-bg)')
+					.attr('stroke-width', 2)
+					.attr('opacity', 0.85)
+					.attr('pointer-events', 'none');
+				pendingGhostPath = inner
+					.append('path')
+					.attr('class', 'vertex-ghost-path')
+					.attr('fill', region.color)
+					.attr('opacity', 0.2)
+					.attr('stroke', region.color)
+					.attr('stroke-opacity', 0.5)
+					.attr('stroke-dasharray', '3 3')
+					.attr('stroke-width', 1.5)
+					.attr('pointer-events', 'none');
+				updatePendingPath(px, py);
+			})
+			.on('drag', function (event) {
+				if (!pendingGhost) return;
+				const x = clamp(event.x, 0, iw);
+				const y = clamp(event.y, 0, ih);
+				pendingGhost.attr('cx', x).attr('cy', y);
+				updatePendingPath(x, y);
+			})
+			.on('end', function (event) {
+				const x = clamp(event.x, 0, iw);
+				const y = clamp(event.y, 0, ih);
+				pendingGhost?.remove();
+				pendingGhostPath?.remove();
+				pendingGhost = null;
+				pendingGhostPath = null;
+				const newVertex: [number, number] = [
+					clamp(xs.invert(x), ax0.range[0], ax0.range[1]),
+					clamp(ys.invert(y), ax1.range[0], ax1.range[1])
+				];
+				const insertAt = pendingIdx + 1;
+				const nextVerts = [
+					...shape.vertices.slice(0, insertAt),
+					newVertex,
+					...shape.vertices.slice(insertAt)
+				];
+				setSelectedVertex(insertAt);
+				// Replace the array (not mutate in place) so the structuralKey
+				// effect re-fires and rebuilds the SVG with a handle on the
+				// new vertex.
+				shape.vertices = nextVerts;
+				pendingIdx = -1;
+			});
+		frame.call(insertDrag);
+
+		function updatePendingPath(px: number, py: number) {
+			if (!pendingGhostPath || pendingIdx < 0) return;
+			const insertAt = pendingIdx + 1;
+			const verts = shape.vertices;
+			const points: [number, number][] = [];
+			for (let i = 0; i < verts.length; i++) {
+				if (i === insertAt) points.push([px, py]);
+				points.push([xs(verts[i][0]), ys(verts[i][1])]);
 			}
-			const newVertex: [number, number] = [
-				clamp(xs.invert(px), ax0.range[0], ax0.range[1]),
-				clamp(ys.invert(py), ax1.range[0], ax1.range[1])
-			];
-			// Replace the array (not mutate in place) so the structuralKey
-			// effect re-fires and rebuilds the SVG with a handle on the new
-			// vertex.
-			shape.vertices = [...verts.slice(0, bestIdx + 1), newVertex, ...verts.slice(bestIdx + 1)];
-		});
+			if (insertAt >= verts.length) points.push([px, py]);
+			const d = 'M ' + points.map(([x, y]) => `${x},${y}`).join(' L ') + ' Z';
+			pendingGhostPath.attr('d', d);
+		}
 
 		// Axis labels (compact)
 		inner
@@ -644,8 +841,20 @@
 		}
 		polyPath.attr('d', pathFromVertices());
 
-		// Vertex handles. Shift-click a vertex to remove (when there are
-		// more than 3 left).
+		// Selection halo — rendered under the handles so it doesn't intercept
+		// clicks. The top-level selection effect drives its visibility.
+		const halo = inner
+			.append('circle')
+			.attr('class', 'vertex-halo')
+			.attr('r', 12)
+			.attr('fill', 'none')
+			.attr('stroke', 'var(--color-accent)')
+			.attr('stroke-width', 2)
+			.attr('opacity', 0)
+			.attr('pointer-events', 'none');
+
+		// Vertex handles. Plain click selects; shift-click removes (when there
+		// are more than 3 left). Drag repositions.
 		const vertexHandles = shape.vertices.map((_, i) => {
 			const h = inner
 				.append('circle')
@@ -658,14 +867,24 @@
 				.attr('cx', xs(shape.vertices[i][0]))
 				.attr('cy', ys(shape.vertices[i][1]));
 			h.on('click', (event) => {
-				if (!event.shiftKey) return;
 				event.stopPropagation();
-				if (shape.vertices.length <= 3) return;
-				shape.vertices = shape.vertices.filter((_, j) => j !== i);
+				if (event.shiftKey) {
+					if (shape.vertices.length <= 3) return;
+					if (selectedVertexIdx === i) setSelectedVertex(null);
+					else if (selectedVertexIdx != null && selectedVertexIdx > i) {
+						setSelectedVertex(selectedVertexIdx - 1);
+					}
+					shape.vertices = shape.vertices.filter((_, j) => j !== i);
+					return;
+				}
+				setSelectedVertex(selectedVertexIdx === i ? null : i);
 			});
 			h.call(makeVertexDrag(i));
 			return h;
 		});
+
+		polyRefs.current = { handles: vertexHandles, halo, path: polyPath, xs, ys };
+		updateHaloFromState();
 
 		function rebuildPath() {
 			const pts = vertexHandles.map((h) => `${+h.attr('cx')},${+h.attr('cy')}`);
@@ -677,12 +896,14 @@
 				.drag<SVGCircleElement, unknown>()
 				.on('start', function () {
 					d3.select(this).attr('cursor', 'grabbing');
+					setSelectedVertex(i);
 				})
 				.on('drag', function (event) {
 					const x = clamp(event.x, 0, iw);
 					const y = clamp(event.y, 0, ih);
 					d3.select(this).attr('cx', x).attr('cy', y);
 					rebuildPath();
+					halo.attr('cx', x).attr('cy', y);
 				})
 				.on('end', function (event) {
 					d3.select(this).attr('cursor', 'grab');

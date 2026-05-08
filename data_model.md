@@ -60,10 +60,26 @@ The graph defines `N` axes. Each axis has:
 | `max_label` | string | the "right/top" endpoint, e.g. "demi", "non-binary" |
 | `range` | `[number, number]` | numeric bounds, default `[0, 1]` |
 | `waypoints` | list of `{position, label, color?}` | intermediate labeled positions along this axis (e.g. "gray" between ace and demi; "girl" between agender and women) |
+| `zero_label` | string | optional textual name for the zero crossing — meaningful only when the range straddles zero (e.g. `range=[-1, 1]`). Names the neutral midpoint the same way `min_label`/`max_label` name the poles. |
 
-Waypoints in v1 are **per-axis**, rendered as tick labels or guide lines. Labeled points *in N-D space* (e.g. "gendervoid at (0.2, 0.3)") are deferred — the user's examples don't require them yet.
+Per-axis waypoints render as tick labels or guide lines. They name a position along a single axis (e.g. "gray" between ace and demi).
 
-### 3.3 Regions
+For labeled points *in N-D space* (e.g. "gendervoid" at (0.2, 0.3)), see §3.3 below — those live on the schema, not on an axis.
+
+### 3.3 Point waypoints (N-D landmarks)
+
+A point waypoint is a labeled landmark at a specific position in the coordinate space — distinct from per-axis waypoints, which only mark a position along one axis. Stored as `schema.point_waypoints`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | stable |
+| `label` | string | user-set, e.g. "gendervoid" |
+| `coordinates` | `number[]` | length must equal graph dimensionality |
+| `color` | string | optional |
+
+Rendered in v1 on 2D graphs as a small marker (e.g. cross/plus) with its label. 1D graphs typically use per-axis waypoints instead. 3D rendering of point waypoints is deferred along with the rest of 3D rendering.
+
+### 3.4 Regions
 
 Regions are labeled sub-areas of the N-D space, used to annotate state-of-mind bands ("sex attractive within this range").
 
@@ -80,7 +96,7 @@ Regions are labeled sub-areas of the N-D space, used to annotate state-of-mind b
 - `box`: `{min: number[], max: number[]}` — axis-aligned, N-dimensional.
 - `polygon`: `{vertices: [number, number][]}` — closed polyline (2D only). 3D regions deferred.
 
-### 3.4 Datapoints
+### 3.5 Datapoints
 
 A spectrum datapoint is the user's recorded position in the N-D space at a moment in time.
 
@@ -91,6 +107,7 @@ A spectrum datapoint is the user's recorded position in the N-D space at a momen
 | `timestamp` | timestamp | when the datapoint applies (may differ from event posting time, e.g. retroactive entry) |
 | `notes` | string | optional, user-set |
 | `tags` | string[] | optional, user-set (e.g. "post-therapy", "pms-week") |
+| `color` | string | optional, user-set; when unset, clients render the point using a palette cycle indexed by time-order (so consecutive points progress through the flag's colors by default) |
 
 The **current point** is, by default, the most recent datapoint by `timestamp`. (Clients may offer "snap to most recent N hours" averaging later; the data model itself just records points.)
 
@@ -98,7 +115,7 @@ The **current point** is, by default, the most recent datapoint by `timestamp`. 
 
 **Correction and deletion.** A datapoint can be corrected (the owner publishes a fresh datapoint event superseding the prior one) or deleted (Matrix `m.room.redaction` event referencing the datapoint). Compliant clients MUST honor redactions and remove the datapoint from local cache (IndexedDB), not just hide it from rendering. Caveat: a non-compliant client with valid keys at the time the data was decrypted could retain the data — the protocol cannot enforce ephemerality once data has been decrypted on a viewer's device.
 
-### 3.5 History rendering modes
+### 3.6 History rendering modes
 
 How a spectrum graph's history is visualized depends on dimensionality:
 
@@ -249,7 +266,7 @@ Explicitly deferred (acknowledged but not implemented in MVP):
 - **3D regions.** 3D scatter datapoints are reachable in v1; labeled 3D regions (boxes, volumes) are not.
 - **Network graph history.** Network state is point-in-time in v1.
 - **Per-viewer legend redaction at the crypto level** (single room with selective decryption). Handled instead via redundant rooms — see `sharing_model.md`.
-- **Point-in-N-D-space waypoints / landmarks.** v1 supports per-axis waypoints only.
+- **3D point waypoints.** Point waypoints in 2D are supported (§3.3); 3D rendering is deferred along with the rest of 3D rendering.
 - **Computed/derived datapoints** (e.g. "averaged over last week"). v1 stores raw points; clients may render rolling averages but don't persist them.
 - **Discrete / categorical spectrum axes.** v1 axes are continuous numeric. A categorical axis option is plausibly v1.1.
 - **Linked-node graph navigation.** Nodes with confirmed `subject_ref` are *named* but not navigable in v1 — clicking them does not surface that user's other graphs. The richer feature (cross-graph navigation gated on the linked user's separate share grants) is a v2 extension.

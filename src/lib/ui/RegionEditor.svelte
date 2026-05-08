@@ -106,6 +106,29 @@
 		if (r.shape.vertices.length <= 3) return;
 		r.shape.vertices = r.shape.vertices.filter((_, i) => i !== vertexIdx);
 	}
+
+	// Per-region selected-vertex index, kept in sync with RegionPicker via
+	// a bindable. Indexed by region.id so adding/removing regions doesn't
+	// reset selections on unrelated rows.
+	let selectedVertexIdxs = $state<Record<string, number | null>>({});
+
+	function getSelectedIdx(id: string): number | null {
+		return selectedVertexIdxs[id] ?? null;
+	}
+
+	function setSelectedIdx(id: string, idx: number | null) {
+		selectedVertexIdxs = { ...selectedVertexIdxs, [id]: idx };
+	}
+
+	function deleteSelectedVertex(regionIdx: number) {
+		const r = regions[regionIdx];
+		if (r.shape.type !== 'polygon') return;
+		const sel = getSelectedIdx(r.id);
+		if (sel == null) return;
+		if (r.shape.vertices.length <= 3) return;
+		r.shape.vertices = r.shape.vertices.filter((_, i) => i !== sel);
+		setSelectedIdx(r.id, null);
+	}
 </script>
 
 <div class="region-editor">
@@ -173,8 +196,106 @@
 					</button>
 				</div>
 				<div class="picker-wrap">
-					<RegionPicker bind:region={regions[i]} {axes} />
+					<RegionPicker
+						bind:region={regions[i]}
+						{axes}
+						selectedVertexIdx={getSelectedIdx(region.id)}
+						onSelectedVertexChange={(idx) => setSelectedIdx(region.id, idx)}
+					/>
 				</div>
+				{#if region.shape.type === 'box'}
+					{@const boxShape = region.shape}
+					<div class="bounds-grid">
+						<span class="muted">{axes[0]?.name ?? 'axis 1'}</span>
+						<label class="bound-cell">
+							<span class="muted">min</span>
+							<input
+								type="number"
+								step="any"
+								bind:value={boxShape.min[0]}
+								aria-label="{axes[0]?.name ?? 'axis 1'} min"
+								class="vertex-coord"
+							/>
+						</label>
+						<label class="bound-cell">
+							<span class="muted">max</span>
+							<input
+								type="number"
+								step="any"
+								bind:value={boxShape.max[0]}
+								aria-label="{axes[0]?.name ?? 'axis 1'} max"
+								class="vertex-coord"
+							/>
+						</label>
+						<span class="muted">{axes[1]?.name ?? 'axis 2'}</span>
+						<label class="bound-cell">
+							<span class="muted">min</span>
+							<input
+								type="number"
+								step="any"
+								bind:value={boxShape.min[1]}
+								aria-label="{axes[1]?.name ?? 'axis 2'} min"
+								class="vertex-coord"
+							/>
+						</label>
+						<label class="bound-cell">
+							<span class="muted">max</span>
+							<input
+								type="number"
+								step="any"
+								bind:value={boxShape.max[1]}
+								aria-label="{axes[1]?.name ?? 'axis 2'} max"
+								class="vertex-coord"
+							/>
+						</label>
+					</div>
+				{/if}
+				{#if region.shape.type === 'polygon'}
+					{@const polyShape = region.shape}
+					{@const sel = getSelectedIdx(region.id)}
+					{#if sel !== null && sel < polyShape.vertices.length}
+						<div class="vertex-edit">
+							<span class="muted">vertex {sel + 1}:</span>
+							<input
+								type="number"
+								step="any"
+								bind:value={polyShape.vertices[sel][0]}
+								aria-label="{axes[0]?.name ?? 'x'} coordinate"
+								placeholder="x"
+								class="vertex-coord"
+							/>
+							<input
+								type="number"
+								step="any"
+								bind:value={polyShape.vertices[sel][1]}
+								aria-label="{axes[1]?.name ?? 'y'} coordinate"
+								placeholder="y"
+								class="vertex-coord"
+							/>
+							<button
+								type="button"
+								class="ghost-tiny remove"
+								onclick={() => deleteSelectedVertex(i)}
+								disabled={polyShape.vertices.length <= 3}
+								title={polyShape.vertices.length <= 3
+									? 'a polygon needs at least 3 vertices'
+									: 'delete this vertex'}
+							>
+								delete
+							</button>
+							<button
+								type="button"
+								class="ghost-tiny"
+								onclick={() => setSelectedIdx(region.id, null)}
+								title="deselect"
+							>
+								×
+							</button>
+						</div>
+					{:else}
+						<p class="readout muted">click a vertex to edit / delete it</p>
+					{/if}
+				{/if}
 				<p class="readout muted">{summarize(region)}</p>
 			</div>
 		{/each}
@@ -229,6 +350,42 @@
 		padding: var(--space-2);
 		background: rgba(0, 0, 0, 0.2);
 		border-radius: 4px;
+	}
+	.vertex-edit {
+		display: flex;
+		gap: var(--space-2);
+		align-items: center;
+		flex-wrap: wrap;
+		font-size: 0.85em;
+	}
+	.bounds-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 0.8fr) 1fr 1fr;
+		gap: var(--space-2);
+		align-items: center;
+		font-size: 0.85em;
+	}
+	.bound-cell {
+		display: inline-flex;
+		gap: var(--space-1);
+		align-items: center;
+	}
+	.vertex-edit .vertex-coord {
+		background: rgba(0, 0, 0, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-fg);
+		padding: var(--space-1) var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+		width: 90px;
+	}
+	.vertex-edit .vertex-coord:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+	.vertex-edit button.ghost-tiny:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 	.readout {
 		margin: 0;

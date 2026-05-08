@@ -78,11 +78,21 @@ export interface BaseGraph {
 
 export type SpectrumDimensions = 1 | 2 | 3;
 
-// A labeled position along a single axis. Per-axis, NOT a labeled point in
-// N-D space — point-in-space landmarks are deferred (data_model.md §10).
+// A labeled position along a single axis. Per-axis — see PointWaypoint for
+// labeled points in N-D space.
 export interface AxisWaypoint {
 	position: number;
 	label: string;
+	color?: string;
+}
+
+// A labeled point in the N-D coordinate space (e.g. "gendervoid" at (0.2,
+// 0.3)). Stored on SpectrumSchema, not on an axis. v1 renders these on 2D
+// graphs; 1D could use AxisWaypoint instead, and 3D rendering is deferred.
+export interface PointWaypoint {
+	id: string;
+	label: string;
+	coordinates: number[];
 	color?: string;
 }
 
@@ -92,6 +102,11 @@ export interface Axis {
 	max_label: string;
 	range: [number, number];
 	waypoints?: AxisWaypoint[];
+	// Optional textual label for the zero crossing — meaningful when the
+	// axis range straddles zero (e.g. range=[-1, 1]) and the user wants to
+	// name the neutral midpoint, the same way min_label/max_label name the
+	// poles.
+	zero_label?: string;
 }
 
 // A region's geometric shape. 3D regions deferred (data_model.md §10).
@@ -114,12 +129,17 @@ export interface SpectrumDatapoint {
 	timestamp: Timestamp;
 	notes?: string;
 	tags?: string[];
+	// Optional per-point color override. When unset, clients render the point
+	// using a palette cycle indexed by time-order (so consecutive points
+	// progress through the flag's colors by default).
+	color?: string;
 }
 
 export interface SpectrumSchema {
 	dimensions: SpectrumDimensions;
 	axes: Axis[];
 	regions: Region[];
+	point_waypoints?: PointWaypoint[];
 }
 
 export interface SpectrumGraph extends BaseGraph {
