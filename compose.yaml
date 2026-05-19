@@ -4,11 +4,19 @@
 # scripts/dev-matrix.sh — that script generates a fresh homeserver.yaml on
 # first run, patches in dev-only overrides (open registration, slack
 # rate-limits), and then starts this service. Do not expose to the network.
+#
+# `user:` matches the host UID/GID so files Synapse writes to ./data are
+# owned by the developer, not by a container-internal user we can't touch
+# from the host. scripts/dev-matrix.sh exports MATRIX_UID and MATRIX_GID
+# from `id -u` / `id -g` before invoking compose; the defaults are a
+# fallback for direct `docker compose up` invocation on typical Linux
+# layouts.
 
 services:
   synapse:
     image: matrixdotorg/synapse:v1.122.0
     container_name: queer-curves-synapse
+    user: '${MATRIX_UID:-1000}:${MATRIX_GID:-1000}'
     environment:
       SYNAPSE_SERVER_NAME: localhost
       SYNAPSE_REPORT_STATS: 'no'
