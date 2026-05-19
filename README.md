@@ -70,6 +70,24 @@ Before pushing, the same gauntlet CI runs locally is:
 pnpm lint && pnpm check && pnpm test && pnpm build
 ```
 
+### Local Matrix server
+
+Matrix integration is in early scaffolding. For development you'll need a homeserver to test against — the project ships a Docker Compose setup for a single-node Synapse bound to `127.0.0.1`.
+
+| Action                        | Command                            |
+| ----------------------------- | ---------------------------------- |
+| First-time setup + start      | `scripts/dev-matrix.sh up`         |
+| Create a dev user             | `scripts/dev-matrix.sh user alice` |
+| Tail logs                     | `scripts/dev-matrix.sh logs`       |
+| Stop the container            | `scripts/dev-matrix.sh down`       |
+| Wipe Synapse state (confirms) | `scripts/dev-matrix.sh reset`      |
+
+The first `up` generates a fresh `homeserver.yaml` in `data/synapse/` and patches in dev-only overrides — open registration on the loopback interface and slack rate limits so we don't trip them during exploratory testing. Created users get the password `devpass` (e.g. `scripts/dev-matrix.sh user alice` makes `@alice:localhost`).
+
+Synapse listens at `http://localhost:8008`. Federation is off, registration is open on the loopback interface — **do not expose this server to the network**. The `data/` directory holds all running state (signing keys, SQLite DB, media uploads) and is gitignored.
+
+Requires Docker, or a compatible runtime (`podman compose` and `podman-compose` are auto-detected).
+
 ### Project layout
 
 ```

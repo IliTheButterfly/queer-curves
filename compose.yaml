@@ -1,0 +1,24 @@
+# Local Synapse homeserver for queer-curves development.
+#
+# Bound to 127.0.0.1, federation off. Bootstrap and lifecycle are handled by
+# scripts/dev-matrix.sh — that script generates a fresh homeserver.yaml on
+# first run, patches in dev-only overrides (open registration, slack
+# rate-limits), and then starts this service. Do not expose to the network.
+
+services:
+  synapse:
+    image: matrixdotorg/synapse:v1.122.0
+    container_name: queer-curves-synapse
+    environment:
+      SYNAPSE_SERVER_NAME: localhost
+      SYNAPSE_REPORT_STATS: 'no'
+    volumes:
+      - ./data/synapse:/data
+    ports:
+      - '127.0.0.1:8008:8008'
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:8008/health']
+      interval: 10s
+      timeout: 3s
+      retries: 10
