@@ -41,7 +41,7 @@
 
 	async function persist(updated: Graph) {
 		if (isUserGraph) {
-			saveUserGraph(updated);
+			await saveUserGraph(updated);
 			await invalidateAll();
 		}
 	}
@@ -153,7 +153,7 @@
 
 	async function handleDelete() {
 		if (!confirm(`Delete "${graph.name}"? This can't be undone.`)) return;
-		deleteUserGraph(graph.id);
+		await deleteUserGraph(graph.id);
 		await goto('/');
 	}
 </script>
