@@ -9,6 +9,7 @@
 
 import type { MatrixClient } from 'matrix-js-sdk';
 import { clearSession, loadSession, saveSession, type MatrixSession } from './session.js';
+import { matrixStore } from './store.svelte.js';
 
 let _client: MatrixClient | null = null;
 
@@ -19,6 +20,14 @@ let _client: MatrixClient | null = null;
 // than the setup flow (page reload, navigation away, etc., per a fresh
 // session restore which never sets it).
 let _pendingAuthPassword: string | null = null;
+
+// The just-generated secret-storage key, kept in memory for the duration
+// of the bootstrap flow. matrix-js-sdk's bootstrapSecretStorage internally
+// asks the app for the storage key (via the getSecretStorageKey crypto
+// callback) right after creating it — there's no "and-here-it-is" handoff,
+// so we cache the bytes ourselves and return them from the callback.
+// Cleared once setup completes or anything tears down the client.
+let _pendingSecretStorageKey: Uint8Array | null = null;
 
 export function getClient(): MatrixClient | null {
 	return _client;
@@ -131,15 +140,57 @@ async function startClient(session: MatrixSession): Promise<void> {
 		userId: session.userId,
 		accessToken: session.accessToken,
 		deviceId: session.deviceId,
-		useAuthorizationHeader: true
+		useAuthorizationHeader: true,
+		cryptoCallbacks: {
+			// matrix-js-sdk asks for the secret-storage private key during
+			// bootstrap (right after we generate it) and on any later
+			// operation that needs to decrypt secrets. For the bootstrap path
+			// we hand back the bytes we just cached; for restored sessions
+			// the cache is empty and we return null — the caller is expected
+			// to prompt the user for their recovery key (a follow-up).
+			getSecretStorageKey: async ({ keys }) => {
+				if (!_pendingSecretStorageKey) return null;
+				const keyId = Object.keys(keys)[0];
+				if (!keyId) return null;
+				return [keyId, _pendingSecretStorageKey];
+			}
+		}
 	});
 	// Bring up Rust crypto with IndexedDB persistence before sync starts —
 	// otherwise the client can't decrypt anything and sync events that come
 	// through encrypted rooms are silently dropped to a re-decrypt queue.
 	await _client.initRustCrypto({ useIndexedDB: true });
-	// Minimal sync — we don't have rooms yet, and pull-on-open will drive
-	// sync explicitly in follow-up work.
-	await _client.startClient({ initialSyncLimit: 0 });
+	// matrix-js-sdk's default filter sets room.timeline.unread_thread_notifications
+	// (MSC3773). Synapse 1.144 (and at least the matrixdotorg/synapse:latest
+	// image at the time of writing) drops *all* joined rooms from the initial
+	// /sync response when both that flag and MSC4222 use_state_after=true
+	// (which the SDK also sends) are present. Override the SDK's default
+	// filter with a minimal one so our rooms actually arrive.
+	const filter = new sdk.Filter(session.userId);
+	filter.setDefinition({ room: { timeline: { limit: 20 } } });
+	// startClient resolves before the first /sync completes, so callers that
+	// run immediately afterward see an empty room list. Wait for PREPARED.
+	const prepared = new Promise<void>((resolve) => {
+		const handler = (state: string) => {
+			if (state === 'PREPARED' || state === 'ERROR') {
+				_client?.off('sync' as never, handler as never);
+				resolve();
+			}
+		};
+		_client!.on('sync' as never, handler as never);
+	});
+	// Bump the rooms epoch on anything that could change the room list so the
+	// landing view re-renders as catch-up syncs deliver rooms. PREPARED arrives
+	// before all the catch-up /sync round-trips finish, so we can't rely on a
+	// one-shot fetch at startup; this gives us reactivity instead.
+	const bump = () => {
+		matrixStore.roomsEpoch++;
+	};
+	_client.on('Room' as never, bump as never);
+	_client.on('Room.timeline' as never, bump as never);
+	_client.on('Room.myMembership' as never, bump as never);
+	await _client.startClient({ filter });
+	await prepared;
 }
 
 async function teardownClient(): Promise<void> {
@@ -150,6 +201,7 @@ async function teardownClient(): Promise<void> {
 		// no-op
 	}
 	_client = null;
+	_pendingSecretStorageKey = null;
 }
 
 // ─── Crypto setup ──────────────────────────────────────────────────────────
@@ -227,29 +279,38 @@ export async function setupCrypto(): Promise<CryptoSetupResult> {
 	// 1. Generate a fresh recovery key. The SDK gives us both the raw bytes
 	//    (used internally) and the base58-ish encoded form for the user.
 	const recoveryKey = await crypto.createRecoveryKeyFromPassphrase();
+	// Cache the bytes so the getSecretStorageKey crypto callback can
+	// satisfy matrix-js-sdk's internal lookups during bootstrap.
+	_pendingSecretStorageKey = recoveryKey.privateKey;
 
-	// 2. Bootstrap cross-signing. This is the step the server requires UIA
-	//    for — we supply the password the user just typed.
-	await crypto.bootstrapCrossSigning({
-		authUploadDeviceSigningKeys: async (makeRequest) => {
-			await makeRequest({
-				type: 'm.login.password',
-				identifier: { type: 'm.id.user', user: session.userId },
-				password
-			});
-		}
-	});
+	try {
+		// 2. Bootstrap cross-signing. This is the step the server requires
+		//    UIA for — we supply the password the user just typed.
+		await crypto.bootstrapCrossSigning({
+			authUploadDeviceSigningKeys: async (makeRequest) => {
+				await makeRequest({
+					type: 'm.login.password',
+					identifier: { type: 'm.id.user', user: session.userId },
+					password
+				});
+			}
+		});
 
-	// 3. Create secret storage tied to the recovery key, then turn on a new
-	//    server-side key backup. Both are stored under the same recovery
-	//    key so the user only has to remember one thing.
-	await crypto.bootstrapSecretStorage({
-		createSecretStorageKey: async () => recoveryKey,
-		setupNewKeyBackup: true,
-		setupNewSecretStorage: true
-	});
+		// 3. Create secret storage tied to the recovery key, then turn on a new
+		//    server-side key backup. Both are stored under the same recovery
+		//    key so the user only has to remember one thing.
+		await crypto.bootstrapSecretStorage({
+			createSecretStorageKey: async () => recoveryKey,
+			setupNewKeyBackup: true,
+			setupNewSecretStorage: true
+		});
 
-	_pendingAuthPassword = null;
+		_pendingAuthPassword = null;
 
-	return { encodedRecoveryKey: recoveryKey.encodedPrivateKey ?? '' };
+		return { encodedRecoveryKey: recoveryKey.encodedPrivateKey ?? '' };
+	} finally {
+		// Drop the cached key — anything that needs it later (multi-device
+		// unlock, etc.) will prompt the user to type it in.
+		_pendingSecretStorageKey = null;
+	}
 }

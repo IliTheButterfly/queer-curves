@@ -18,10 +18,14 @@
 
 	// Refetch whenever the session/crypto state changes — switching from
 	// logged-out to logged-in (or vice versa) swaps the active store
-	// backend, so the list needs to reload.
+	// backend, so the list needs to reload. Also refetch when roomsEpoch
+	// bumps: on a fresh page load, matrix-js-sdk's initial /sync returns
+	// rooms only after several catch-up cycles, so we re-list as rooms
+	// arrive instead of trying to wait for everything up-front.
 	$effect(() => {
 		void matrixStore.session;
 		void matrixStore.cryptoStatus;
+		void matrixStore.roomsEpoch;
 		if (!matrixStore.hydrated) return;
 		(async () => {
 			try {

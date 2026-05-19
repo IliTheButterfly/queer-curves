@@ -10,6 +10,13 @@ class MatrixStore {
 	hydrated = $state(false);
 	/** Cached crypto status — refreshed after login / setup / restore. */
 	cryptoStatus = $state<CryptoStatus | null>(null);
+	/**
+	 * Increments whenever a Matrix sync delivers a new room or a new timeline
+	 * event in an existing room. The landing page and other graph-listing
+	 * views read this so they can re-fetch reactively as data trickles in
+	 * during a catch-up sync.
+	 */
+	roomsEpoch = $state(0);
 
 	constructor() {
 		if (typeof window !== 'undefined') {

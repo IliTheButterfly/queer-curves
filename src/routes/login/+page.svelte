@@ -90,8 +90,7 @@
 				required
 				placeholder="alice"
 				autocomplete={mode === 'login' ? 'username' : 'off'}
-				pattern="^[a-z0-9._=\-/]+$"
-				title="lowercase letters, digits, and . _ = - / are allowed"
+				title="The localpart of your Matrix user id, without the @ or :server suffix"
 			/>
 			<small class="hint"
 				>Without the leading <code>@</code> or the <code>:server</code> part.</small

@@ -67,8 +67,6 @@ export async function listMatrixGraphs(): Promise<Graph[]> {
 		if (!marker) continue;
 		const graph = findLatestGraph(room);
 		if (graph) {
-			// The canonical id is the Matrix room id, in case the stored
-			// snapshot drifted somehow.
 			out.push({ ...graph, id: room.roomId });
 		}
 	}

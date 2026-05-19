@@ -38,7 +38,25 @@ function shouldUseMatrix(): boolean {
 	return Boolean(matrixStore.session && matrixStore.cryptoStatus?.ready);
 }
 
+// On a full page load, +layout.svelte's onMount fires restoreSession +
+// getCryptoStatus asynchronously and only flips matrixStore.hydrated=true
+// when both have completed. Routes (especially /graphs/new) can otherwise
+// run a save before hydration finishes, see cryptoStatus=null, and silently
+// drop the graph into localStorage. Block here until hydration is done so
+// the backend choice is based on a known auth state.
+async function ensureHydrated(): Promise<void> {
+	if (matrixStore.hydrated) return;
+	await new Promise<void>((resolve) => {
+		const check = () => {
+			if (matrixStore.hydrated) resolve();
+			else setTimeout(check, 25);
+		};
+		check();
+	});
+}
+
 export async function listUserGraphs(): Promise<Graph[]> {
+	await ensureHydrated();
 	if (shouldUseMatrix()) {
 		try {
 			return await listMatrixGraphs();
@@ -50,6 +68,7 @@ export async function listUserGraphs(): Promise<Graph[]> {
 }
 
 export async function getUserGraph(id: string): Promise<Graph | undefined> {
+	await ensureHydrated();
 	if (shouldUseMatrix()) {
 		try {
 			const g = await getMatrixGraph(id);
@@ -62,6 +81,7 @@ export async function getUserGraph(id: string): Promise<Graph | undefined> {
 }
 
 export async function saveUserGraph(graph: Graph): Promise<Graph> {
+	await ensureHydrated();
 	if (shouldUseMatrix()) {
 		const saved = await saveMatrixGraph(graph);
 		return saved;
@@ -75,6 +95,7 @@ export async function saveUserGraph(graph: Graph): Promise<Graph> {
 }
 
 export async function deleteUserGraph(id: string): Promise<void> {
+	await ensureHydrated();
 	if (shouldUseMatrix()) {
 		await deleteMatrixGraph(id);
 		return;
