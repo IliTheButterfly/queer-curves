@@ -10,8 +10,9 @@
 	import NetworkNodeList from '$lib/ui/NetworkNodeList.svelte';
 	import NetworkEdgeForm from '$lib/ui/NetworkEdgeForm.svelte';
 	import NetworkEdgeList from '$lib/ui/NetworkEdgeList.svelte';
-	import { deleteUserGraph, saveUserGraph } from '$lib/store/graphs.js';
+	import { deleteUserGraph, getUserGraph, saveUserGraph } from '$lib/store/graphs.js';
 	import { downloadGraphAsJson } from '$lib/store/io.js';
+	import { matrixStore } from '$lib/matrix/store.svelte.js';
 	import type {
 		Graph,
 		NetworkEdge,
@@ -24,16 +25,51 @@
 
 	let { data }: { data: PageData } = $props();
 
-	// `data.graph` is the single source of truth. Mutations save to localStorage
-	// and call invalidateAll() so SvelteKit re-runs the loader and re-reads
-	// fresh data — no separate local mutable copy to keep in sync.
-	const graph = $derived(data.graph);
+	// `loaded` holds the graph once it's known. The SvelteKit loader supplies
+	// it for fixtures and any Matrix room already in the local sync cache;
+	// for rooms that haven't synced yet `data.graph` starts null and we
+	// re-fetch reactively below as matrixStore.roomsEpoch bumps. The lint
+	// rule below wants $derived, but the value is *both* derived from data
+	// and written from the network — that's $state + $effect.
+	// eslint-disable-next-line svelte/prefer-writable-derived
+	let loaded = $state<Graph | null>(data.graph);
+	const graph = $derived(loaded);
 	const isUserGraph = $derived(data.isUserGraph);
+
+	$effect(() => {
+		// Adopt whatever the loader produced (e.g. when the route param changes
+		// between routes that share this layout).
+		loaded = data.graph;
+	});
+
+	$effect(() => {
+		// React to roomsEpoch: as sync delivers the room and decrypts its
+		// snapshots, re-fetch and swap in the freshest version. We keep
+		// re-fetching even after a graph is loaded because a later snapshot
+		// may decrypt seconds after an earlier one — `findLatestGraph` skips
+		// undecryptable events, so the first hit may be stale.
+		void matrixStore.roomsEpoch;
+		if (!data.pendingId) return;
+		const id = data.pendingId;
+		(async () => {
+			try {
+				const g = await getUserGraph(id);
+				if (!g) return;
+				// Only swap if the new snapshot is newer than what we have —
+				// avoids clobbering optimistic local state with a stale read.
+				if (!loaded || (g.modified_at ?? '') > (loaded.modified_at ?? '')) {
+					loaded = g;
+				}
+			} catch (e) {
+				console.warn('getUserGraph retry failed', e);
+			}
+		})();
+	});
 
 	// View selector state — only meaningful for spectrum graphs. The dropdown
 	// is hidden when there's only one view available (1D, or a custom-views
 	// list of length 1).
-	const spectrumViews = $derived(graph.type === 'spectrum' ? activeViews(graph) : []);
+	const spectrumViews = $derived(graph?.type === 'spectrum' ? activeViews(graph) : []);
 	let selectedViewId = $state<string | null>(null);
 	const activeView = $derived(
 		spectrumViews.find((v) => v.id === selectedViewId) ?? spectrumViews[0]
@@ -47,7 +83,7 @@
 	}
 
 	async function handleAddDatapoint(dp: SpectrumDatapoint) {
-		if (graph.type !== 'spectrum') return;
+		if (!graph || graph.type !== 'spectrum') return;
 		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
@@ -56,7 +92,7 @@
 	}
 
 	async function handleAddNode(node: NetworkNode) {
-		if (graph.type !== 'network') return;
+		if (!graph || graph.type !== 'network') return;
 		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
@@ -65,7 +101,7 @@
 	}
 
 	async function handleAddEdge(edge: NetworkEdge) {
-		if (graph.type !== 'network') return;
+		if (!graph || graph.type !== 'network') return;
 		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
@@ -74,7 +110,7 @@
 	}
 
 	async function handleRemoveDatapoint(id: string) {
-		if (graph.type !== 'spectrum') return;
+		if (!graph || graph.type !== 'spectrum') return;
 		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
@@ -83,7 +119,7 @@
 	}
 
 	async function handleRemoveNode(id: string) {
-		if (graph.type !== 'network') return;
+		if (!graph || graph.type !== 'network') return;
 		// Cascade: removing a person also removes all their connections.
 		await persist({
 			...graph,
@@ -94,7 +130,7 @@
 	}
 
 	async function handleRemoveEdge(id: string) {
-		if (graph.type !== 'network') return;
+		if (!graph || graph.type !== 'network') return;
 		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
@@ -103,7 +139,7 @@
 	}
 
 	async function handleEditDatapoint(updated: SpectrumDatapoint) {
-		if (graph.type !== 'spectrum') return;
+		if (!graph || graph.type !== 'spectrum') return;
 		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
@@ -112,7 +148,7 @@
 	}
 
 	async function handleEditNode(updated: NetworkNode) {
-		if (graph.type !== 'network') return;
+		if (!graph || graph.type !== 'network') return;
 		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
@@ -121,7 +157,7 @@
 	}
 
 	async function handleEditEdge(updated: NetworkEdge) {
-		if (graph.type !== 'network') return;
+		if (!graph || graph.type !== 'network') return;
 		await persist({
 			...graph,
 			modified_at: new Date().toISOString(),
@@ -130,7 +166,7 @@
 	}
 
 	async function handleNetworkPositions(positions: Record<string, { x: number; y: number }>) {
-		if (graph.type !== 'network') return;
+		if (!graph || graph.type !== 'network') return;
 		// Skip persistence when nothing meaningfully changed (e.g. tiny
 		// floating-point jitter). Saves a round-trip when a drag ends without
 		// movement.
@@ -152,6 +188,7 @@
 	}
 
 	async function handleDelete() {
+		if (!graph) return;
 		if (!confirm(`Delete "${graph.name}"? This can't be undone.`)) return;
 		await deleteUserGraph(graph.id);
 		await goto('/');
@@ -159,84 +196,91 @@
 </script>
 
 <svelte:head>
-	<title>{graph.name} – queer-curves</title>
+	<title>{graph ? graph.name + ' – queer-curves' : 'Loading… – queer-curves'}</title>
 </svelte:head>
 
-<main>
-	<p class="back"><a href="/">← all graphs</a></p>
-	<div class="header-row">
-		<h1>{graph.name}</h1>
-		<div class="header-actions">
-			<button type="button" class="ghost-link" onclick={() => downloadGraphAsJson(graph)}>
-				Export
-			</button>
-			{#if isUserGraph}
-				<a class="ghost-link" href="/graphs/{graph.id}/edit">Edit</a>
-				<button type="button" class="danger-ghost" onclick={handleDelete}>Delete</button>
-			{/if}
+{#if !graph}
+	<main>
+		<p class="back"><a href="/">← all graphs</a></p>
+		<p class="muted">Loading graph…</p>
+	</main>
+{:else}
+	<main>
+		<p class="back"><a href="/">← all graphs</a></p>
+		<div class="header-row">
+			<h1>{graph.name}</h1>
+			<div class="header-actions">
+				<button type="button" class="ghost-link" onclick={() => downloadGraphAsJson(graph)}>
+					Export
+				</button>
+				{#if isUserGraph}
+					<a class="ghost-link" href="/graphs/{graph.id}/edit">Edit</a>
+					<button type="button" class="danger-ghost" onclick={handleDelete}>Delete</button>
+				{/if}
+			</div>
 		</div>
-	</div>
-	{#if graph.description}
-		<p class="muted">{graph.description}</p>
-	{/if}
-	<p class="meta">
-		{#if graph.type === 'spectrum'}
-			{graph.schema.dimensions}D spectrum · {graph.datapoints.length} datapoints
-		{:else}
-			network · {graph.nodes.length} nodes · {graph.edges.length} edges
+		{#if graph.description}
+			<p class="muted">{graph.description}</p>
 		{/if}
-		{#if !isUserGraph}
-			<span class="fixture-tag">fixture</span>
-		{/if}
-	</p>
-
-	{#if graph.type === 'spectrum' && spectrumViews.length > 1}
-		<div class="view-selector">
-			<label>
-				<span class="muted">View:</span>
-				<select
-					value={selectedViewId ?? spectrumViews[0]?.id ?? ''}
-					onchange={(e) => (selectedViewId = (e.currentTarget as HTMLSelectElement).value)}
-				>
-					{#each spectrumViews as v (v.id)}
-						<option value={v.id}>{v.name}</option>
-					{/each}
-				</select>
-			</label>
-		</div>
-	{/if}
-
-	<div class="chart">
-		{#if graph.type === 'spectrum'}
-			<SpectrumHistoryChart {graph} view={activeView} />
-		{:else}
-			<NetworkChart {graph} onPositionsChange={handleNetworkPositions} />
-		{/if}
-	</div>
-
-	<GraphStats {graph} />
-
-	{#if isUserGraph}
-		<section class="editors">
+		<p class="meta">
 			{#if graph.type === 'spectrum'}
-				<SpectrumDatapointForm {graph} view={activeView} onsubmit={handleAddDatapoint} />
-				<SpectrumDatapointList
-					{graph}
-					view={activeView}
-					datapoints={graph.datapoints}
-					axes={graph.schema.axes}
-					onremove={handleRemoveDatapoint}
-					onedit={handleEditDatapoint}
-				/>
+				{graph.schema.dimensions}D spectrum · {graph.datapoints.length} datapoints
 			{:else}
-				<NetworkNodeForm {graph} onsubmit={handleAddNode} />
-				<NetworkNodeList {graph} onremove={handleRemoveNode} onedit={handleEditNode} />
-				<NetworkEdgeForm {graph} onsubmit={handleAddEdge} />
-				<NetworkEdgeList {graph} onremove={handleRemoveEdge} onedit={handleEditEdge} />
+				network · {graph.nodes.length} nodes · {graph.edges.length} edges
 			{/if}
-		</section>
-	{/if}
-</main>
+			{#if !isUserGraph}
+				<span class="fixture-tag">fixture</span>
+			{/if}
+		</p>
+
+		{#if graph.type === 'spectrum' && spectrumViews.length > 1}
+			<div class="view-selector">
+				<label>
+					<span class="muted">View:</span>
+					<select
+						value={selectedViewId ?? spectrumViews[0]?.id ?? ''}
+						onchange={(e) => (selectedViewId = (e.currentTarget as HTMLSelectElement).value)}
+					>
+						{#each spectrumViews as v (v.id)}
+							<option value={v.id}>{v.name}</option>
+						{/each}
+					</select>
+				</label>
+			</div>
+		{/if}
+
+		<div class="chart">
+			{#if graph.type === 'spectrum'}
+				<SpectrumHistoryChart {graph} view={activeView} />
+			{:else}
+				<NetworkChart {graph} onPositionsChange={handleNetworkPositions} />
+			{/if}
+		</div>
+
+		<GraphStats {graph} />
+
+		{#if isUserGraph}
+			<section class="editors">
+				{#if graph.type === 'spectrum'}
+					<SpectrumDatapointForm {graph} view={activeView} onsubmit={handleAddDatapoint} />
+					<SpectrumDatapointList
+						{graph}
+						view={activeView}
+						datapoints={graph.datapoints}
+						axes={graph.schema.axes}
+						onremove={handleRemoveDatapoint}
+						onedit={handleEditDatapoint}
+					/>
+				{:else}
+					<NetworkNodeForm {graph} onsubmit={handleAddNode} />
+					<NetworkNodeList {graph} onremove={handleRemoveNode} onedit={handleEditNode} />
+					<NetworkEdgeForm {graph} onsubmit={handleAddEdge} />
+					<NetworkEdgeList {graph} onremove={handleRemoveEdge} onedit={handleEditEdge} />
+				{/if}
+			</section>
+		{/if}
+	</main>
+{/if}
 
 <style>
 	main {

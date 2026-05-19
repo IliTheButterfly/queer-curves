@@ -107,9 +107,33 @@ export async function saveMatrixGraph(graph: Graph): Promise<Graph> {
 		]
 	} as Parameters<typeof client.createRoom>[0]);
 	const roomId = res.room_id;
+	// `createRoom` resolves once the server has accepted the room, but the
+	// local client's room object — including its m.room.encryption state —
+	// only materialises when /sync delivers the room back. If we sendEvent
+	// before then, matrix-js-sdk thinks the room is unencrypted and sends
+	// the snapshot in plaintext, which then survives any future re-login
+	// regardless of crypto state and overrides later (encrypted) snapshots.
+	await waitForEncryption(client, roomId, 10000);
 	const stored: Graph = { ...graph, id: roomId };
 	await sendCustomEvent(client, roomId, SNAPSHOT_EVENT, stored);
 	return stored;
+}
+
+async function waitForEncryption(
+	client: ReturnType<typeof requireClient>,
+	roomId: string,
+	timeoutMs: number
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const room = client.getRoom(roomId);
+		if (room && room.hasEncryptionStateEvent()) return;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	// Fall through after timeout. The send will still go out — better a
+	// late, possibly-plaintext snapshot than dropping the user's data on
+	// the floor.
+	console.warn('[qc.matrix] waitForEncryption timed out for', roomId);
 }
 
 export async function deleteMatrixGraph(id: string): Promise<void> {

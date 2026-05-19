@@ -111,8 +111,18 @@ export async function restoreSession(): Promise<MatrixSession | null> {
 		// cheap check — if it 401s, the session is dead.
 		await _client!.whoami();
 		return session;
-	} catch {
+	} catch (e) {
 		await teardownClient();
+		// matrix-js-sdk's rust crypto throws "the account in the store
+		// doesn't match the account in the constructor" when the persisted
+		// crypto state belongs to a different device id than the saved
+		// session. This happens after a server-side data wipe or anything
+		// else that gives the same user a new device id. Wipe the crypto
+		// store and start over with a clean slate; the saved access token
+		// is gone too, since it'd be paired with the old device.
+		if (e instanceof Error && /account in the store/i.test(e.message)) {
+			await clearCryptoStore();
+		}
 		clearSession();
 		return null;
 	}
@@ -129,7 +139,39 @@ export async function logout(): Promise<void> {
 	}
 	await teardownClient();
 	clearSession();
+	// The crypto store is keyed to the now-defunct device id. If we left it
+	// in place, the next login (which gets a fresh device id) would fail
+	// with "account in the store doesn't match".
+	await clearCryptoStore();
 	_pendingAuthPassword = null;
+}
+
+async function clearCryptoStore(): Promise<void> {
+	if (typeof indexedDB === 'undefined') return;
+	// matrix-js-sdk's RUST_SDK_STORE_PREFIX is "matrix-js-sdk" and the rust
+	// crypto WASM creates two databases off it. We also nuke any other DBs
+	// whose name contains "matrix" so reused devices / older builds don't
+	// leak crypto state forward. (indexedDB.databases() is the standardised
+	// enumeration API; falling back to the known names if it isn't available
+	// in this browser engine.)
+	const known = ['matrix-js-sdk::matrix-sdk-crypto', 'matrix-js-sdk::matrix-sdk-crypto-meta'];
+	let toDelete = known;
+	try {
+		const dbs = await indexedDB.databases();
+		const names = dbs.map((d) => d.name).filter((n): n is string => !!n);
+		toDelete = Array.from(new Set([...known, ...names.filter((n) => /matrix/i.test(n))]));
+	} catch {
+		// older browsers lacking indexedDB.databases — known list will do
+	}
+	await Promise.all(
+		toDelete.map(
+			(name) =>
+				new Promise<void>((resolve) => {
+					const req = indexedDB.deleteDatabase(name);
+					req.onsuccess = req.onerror = req.onblocked = () => resolve();
+				})
+		)
+	);
 }
 
 async function startClient(session: MatrixSession): Promise<void> {
@@ -179,16 +221,20 @@ async function startClient(session: MatrixSession): Promise<void> {
 		};
 		_client!.on('sync' as never, handler as never);
 	});
-	// Bump the rooms epoch on anything that could change the room list so the
-	// landing view re-renders as catch-up syncs deliver rooms. PREPARED arrives
-	// before all the catch-up /sync round-trips finish, so we can't rely on a
-	// one-shot fetch at startup; this gives us reactivity instead.
+	// Bump the rooms epoch on anything that could change the room list or
+	// the visible content of a room. PREPARED arrives before all the
+	// catch-up /sync round-trips finish, so we can't rely on a one-shot
+	// fetch at startup; this gives the UI reactivity instead. Event.decrypted
+	// is critical: snapshots are encrypted and a later one may not be
+	// readable until its megolm session is delivered via to_device messages,
+	// which can land seconds after the timeline event itself.
 	const bump = () => {
 		matrixStore.roomsEpoch++;
 	};
 	_client.on('Room' as never, bump as never);
 	_client.on('Room.timeline' as never, bump as never);
 	_client.on('Room.myMembership' as never, bump as never);
+	_client.on('Event.decrypted' as never, bump as never);
 	await _client.startClient({ filter });
 	await prepared;
 }

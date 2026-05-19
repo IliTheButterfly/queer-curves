@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import '../app.css';
 	import { getCryptoStatus, logout, restoreSession } from '$lib/matrix/client.js';
@@ -37,6 +38,11 @@
 			await logout();
 			matrixStore.session = null;
 			matrixStore.cryptoStatus = null;
+			// Any route gated on a logged-in session (e.g. /graphs/{room-id})
+			// would otherwise stay open after logout, showing the previous
+			// data or a stale UI. Send the user home where the route is
+			// session-agnostic.
+			await goto('/');
 		} finally {
 			loggingOut = false;
 		}
