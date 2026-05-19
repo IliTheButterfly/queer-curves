@@ -5,21 +5,24 @@
 # first run, patches in dev-only overrides (open registration, slack
 # rate-limits), and then starts this service. Do not expose to the network.
 #
-# `user:` matches the host UID/GID so files Synapse writes to ./data are
-# owned by the developer, not by a container-internal user we can't touch
-# from the host. scripts/dev-matrix.sh exports MATRIX_UID and MATRIX_GID
-# from `id -u` / `id -g` before invoking compose; the defaults are a
-# fallback for direct `docker compose up` invocation on typical Linux
-# layouts.
+# The synapse image's entrypoint starts as container-root, chowns /data to
+# UID:GID and drops privileges via gosu before running the server. Passing
+# UID/GID env vars lets it pick the developer's host UID/GID, so the files
+# in ./data end up host-owned. scripts/dev-matrix.sh exports MATRIX_UID and
+# MATRIX_GID from `id -u` / `id -g` before invoking compose; the defaults
+# are a fallback for direct `docker compose up` on typical Linux layouts.
+# We deliberately don't set the compose `user:` field — that would force
+# the entrypoint to skip the chown step.
 
 services:
   synapse:
     image: matrixdotorg/synapse:v1.122.0
     container_name: queer-curves-synapse
-    user: '${MATRIX_UID:-1000}:${MATRIX_GID:-1000}'
     environment:
       SYNAPSE_SERVER_NAME: localhost
       SYNAPSE_REPORT_STATS: 'no'
+      UID: '${MATRIX_UID:-1000}'
+      GID: '${MATRIX_GID:-1000}'
     volumes:
       - ./data/synapse:/data
     ports:

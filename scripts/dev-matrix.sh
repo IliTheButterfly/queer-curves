@@ -62,11 +62,17 @@ check_ownership() {
 generate_config() {
 	echo "queer-curves-synapse: generating Synapse config in $DATA_DIR..."
 	mkdir -p "$DATA_DIR"
+	# Don't pass --user here. The synapse image's entrypoint starts as
+	# container-root, chowns /data to UID:GID, then drops to that UID via
+	# gosu before running the actual `generate` command. Bypassing the
+	# entrypoint with --user makes it skip the chown step and we end up
+	# unable to create files in the bind mount.
 	docker run --rm \
-		--user "$MATRIX_UID:$MATRIX_GID" \
 		-v "$DATA_DIR":/data \
 		-e SYNAPSE_SERVER_NAME=localhost \
 		-e SYNAPSE_REPORT_STATS=no \
+		-e UID="$MATRIX_UID" \
+		-e GID="$MATRIX_GID" \
 		"$IMAGE" generate >/dev/null
 
 	if ! grep -q 'queer-curves dev overrides' "$CONFIG" 2>/dev/null; then
