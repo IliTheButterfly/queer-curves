@@ -3,12 +3,14 @@
 	import {
 		SCHEMA_VERSION,
 		type Axis,
+		type AxisRef,
 		type EdgeType,
 		type Graph,
 		type NetworkGraph,
 		type PointWaypoint,
 		type Region,
-		type SpectrumGraph
+		type SpectrumGraph,
+		type SpectrumView
 	} from '$lib/types.js';
 	import { palettes, type Palette } from '$lib/presets/palettes.js';
 	import { generateGraphId } from '$lib/store/graphs.js';
@@ -121,22 +123,87 @@
 	}
 
 	function addPointWaypoint() {
-		const ax0 = axes[0];
-		const ax1 = axes[1];
-		const mid0 = (ax0.range[0] + ax0.range[1]) / 2;
-		const mid1 = (ax1.range[0] + ax1.range[1]) / 2;
 		const palette = selectedPalette.colors;
 		const defaultColor = palette[pointWaypoints.length % palette.length] ?? '#c98aff';
+		const coords: number[] = [];
+		for (let i = 0; i < dimensions; i++) {
+			const ax = axes[i];
+			coords.push((ax.range[0] + ax.range[1]) / 2);
+		}
 		pointWaypoints.push({
 			id: newPointWaypointId(),
 			label: '',
-			coordinates: [mid0, mid1],
+			coordinates: coords,
 			color: defaultColor
 		});
 	}
 
 	function removePointWaypoint(idx: number) {
 		pointWaypoints = pointWaypoints.filter((_, i) => i !== idx);
+	}
+
+	// Custom views — when this list is non-empty on save, it overrides the
+	// auto-generated presets. While the form's `dimensions` is in flux the
+	// existing views' channels may reference an axis index that's no longer
+	// valid; the buildGraph step clamps/validates before persisting.
+	let customViews = $state<SpectrumView[]>(
+		untrack(() =>
+			initial?.type === 'spectrum' ? (initial.customization.views ?? []).map(cloneView) : []
+		)
+	);
+
+	function cloneView(v: SpectrumView): SpectrumView {
+		return {
+			id: v.id,
+			name: v.name,
+			layout: v.layout,
+			x: v.x,
+			y: v.y,
+			color: v.color,
+			x_label: v.x_label,
+			y_label: v.y_label,
+			shape: v.shape
+		};
+	}
+
+	function newViewId(): string {
+		return `view-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+	}
+
+	function addCustomView() {
+		customViews.push({
+			id: newViewId(),
+			name: 'New view',
+			layout: 'cartesian',
+			x: 0,
+			y: dimensions >= 2 ? 1 : 'time'
+		});
+	}
+
+	function removeCustomView(idx: number) {
+		customViews = customViews.filter((_, i) => i !== idx);
+	}
+
+	// AxisRef <-> string-code translations so native <select> bindings work.
+	function refToCode(ref: AxisRef | undefined): string {
+		if (ref === undefined) return 'none';
+		if (ref === 'time') return 'time';
+		return `axis-${ref}`;
+	}
+	function codeToRef(code: string): AxisRef | undefined {
+		if (code === 'none') return undefined;
+		if (code === 'time') return 'time';
+		const m = /^axis-(\d+)$/.exec(code);
+		if (m) return parseInt(m[1], 10);
+		return undefined;
+	}
+
+	// If a view references axis i but dimensions has dropped to <= i, fall
+	// back to axis 0 so we never persist an out-of-range index.
+	function clampRef(ref: AxisRef, dim: number): AxisRef {
+		if (ref === 'time') return ref;
+		if (ref >= 0 && ref < dim) return ref;
+		return 0;
 	}
 
 	function cloneRegion(r: Region): Region {
@@ -249,16 +316,17 @@
 				if (dimensions === 2) return r.shape.type === 'box' || r.shape.type === 'polygon';
 				return false;
 			});
-			// 2D-only feature; drop them silently if dimensions changed back
-			// to 1D rather than letting stale points leak into the saved graph.
+			// Drop waypoints in 1D (axis waypoints handle that case) and trim
+			// coords to the current dimensionality so a downsize from 3D→2D
+			// doesn't leak a now-meaningless third coordinate.
 			const validPointWaypoints: PointWaypoint[] | undefined =
-				dimensions === 2
+				dimensions >= 2
 					? pointWaypoints
 							.filter((p) => p.label.trim() !== '')
 							.map((p) => ({
 								id: p.id,
 								label: p.label,
-								coordinates: [...p.coordinates],
+								coordinates: p.coordinates.slice(0, dimensions),
 								color: p.color
 							}))
 					: undefined;
@@ -272,6 +340,32 @@
 					: {})
 			};
 
+			// Strip unnamed views and clamp any axis refs that point past the
+			// current dimensionality (can happen if the user shrinks dims
+			// after adding views referencing the now-dropped axis).
+			const validViews: SpectrumView[] = customViews
+				.filter((v) => v.name.trim() !== '')
+				.map((v) => {
+					const out: SpectrumView = {
+						id: v.id,
+						name: v.name.trim(),
+						layout: v.layout,
+						x: clampRef(v.x, dimensions),
+						y: clampRef(v.y, dimensions)
+					};
+					if (v.color !== undefined) out.color = clampRef(v.color, dimensions);
+					const xL = v.x_label?.trim();
+					const yL = v.y_label?.trim();
+					if (xL) out.x_label = xL;
+					if (yL) out.y_label = yL;
+					// Shape only matters for radial / polar layouts, and 'circle'
+					// is the default — keep saved data lean by stripping it.
+					if ((v.layout === 'radial' || v.layout === 'polar') && v.shape && v.shape !== 'circle') {
+						out.shape = v.shape;
+					}
+					return out;
+				});
+
 			if (initial?.type === 'spectrum') {
 				return {
 					...initial,
@@ -283,7 +377,8 @@
 					customization: {
 						...initial.customization,
 						theme: { ...initial.customization.theme, palette: colors },
-						title: { show: true, text: name }
+						title: { show: true, text: name },
+						...(validViews.length > 0 ? { views: validViews } : { views: undefined })
 					}
 				} satisfies SpectrumGraph;
 			}
@@ -301,7 +396,8 @@
 				schema: spectrumSchema,
 				customization: {
 					theme: { palette: colors },
-					title: { show: true, text: name }
+					title: { show: true, text: name },
+					...(validViews.length > 0 ? { views: validViews } : {})
 				},
 				datapoints: []
 			} satisfies SpectrumGraph;
@@ -407,7 +503,9 @@
 				</label>
 				<label class="radio compact">
 					<input type="radio" bind:group={dimensions} value={3} />
-					<span><strong>3D</strong> <small>third axis encoded as colour on the 2D plane</small></span>
+					<span
+						><strong>3D</strong> <small>third axis encoded as colour on the 2D plane</small></span
+					>
 				</label>
 			{/if}
 		</fieldset>
@@ -445,11 +543,7 @@
 							<span class="label">
 								Zero label <small>(optional — names the neutral midpoint)</small>
 							</span>
-							<input
-								type="text"
-								bind:value={axis.zero_label}
-								placeholder="e.g. neutral, none"
-							/>
+							<input type="text" bind:value={axis.zero_label} placeholder="e.g. neutral, none" />
 						</label>
 					{/if}
 					<div class="waypoints">
@@ -494,20 +588,23 @@
 			</fieldset>
 		{:else}
 			<p class="hint">
-				Regions in 3D are deferred — for v1, use point waypoints or per-datapoint colors to
-				annotate the colour-ramped scatter.
+				Regions in 3D are deferred — for v1, use point waypoints or per-datapoint colors to annotate
+				the colour-ramped scatter.
 			</p>
 		{/if}
 
-		{#if dimensions === 2}
+		{#if dimensions >= 2}
 			<fieldset class="point-waypoints-fieldset">
-				<legend>2D waypoints</legend>
+				<legend>{dimensions}D waypoints</legend>
 				<p class="hint">
-					Labelled landmarks at a specific (x, y) — e.g. "gendervoid" at (0.2, 0.3). Drawn as
-					crosses on the chart to stay distinct from datapoints.
+					Labelled landmarks at a specific
+					{#if dimensions === 2}(x, y) — e.g. "gendervoid" at (0.2, 0.3).
+					{:else}(x, y, z) — colour-tinted by the third axis on the 3D scatter.
+					{/if}
+					Drawn as crosses on the chart to stay distinct from datapoints.
 				</p>
 				{#each pointWaypoints as pw, i (pw.id)}
-					<div class="pwp-row">
+					<div class="pwp-row" class:pwp-row-3d={dimensions === 3}>
 						<input
 							type="text"
 							bind:value={pw.label}
@@ -519,7 +616,7 @@
 							type="number"
 							step="any"
 							bind:value={pw.coordinates[0]}
-							placeholder="{axes[0]?.name ?? 'x'}"
+							placeholder={axes[0]?.name ?? 'x'}
 							class="pwp-coord"
 							aria-label="{axes[0]?.name ?? 'x'} coordinate"
 						/>
@@ -527,10 +624,20 @@
 							type="number"
 							step="any"
 							bind:value={pw.coordinates[1]}
-							placeholder="{axes[1]?.name ?? 'y'}"
+							placeholder={axes[1]?.name ?? 'y'}
 							class="pwp-coord"
 							aria-label="{axes[1]?.name ?? 'y'} coordinate"
 						/>
+						{#if dimensions === 3}
+							<input
+								type="number"
+								step="any"
+								bind:value={pw.coordinates[2]}
+								placeholder={axes[2]?.name ?? 'z'}
+								class="pwp-coord"
+								aria-label="{axes[2]?.name ?? 'z'} coordinate"
+							/>
+						{/if}
 						<ColorPickerWithPalette
 							bind:value={pointWaypoints[i].color}
 							paletteColors={selectedPalette.colors}
@@ -547,6 +654,128 @@
 					</div>
 				{/each}
 				<button type="button" class="ghost" onclick={addPointWaypoint}>+ add waypoint</button>
+			</fieldset>
+		{/if}
+
+		{#if dimensions >= 2}
+			<fieldset class="views-fieldset">
+				<legend>Views <small>(optional)</small></legend>
+				<p class="hint">
+					Custom views appear in the chart's view selector alongside the built-in presets — pick a
+					layout and assign each axis (or time) to x, y, and optionally colour.
+				</p>
+				{#each customViews as v, i (v.id)}
+					<div class="view-row">
+						<input
+							type="text"
+							class="view-name"
+							bind:value={v.name}
+							placeholder="view name"
+							maxlength="40"
+						/>
+						<select
+							class="view-layout"
+							value={v.layout}
+							onchange={(e) => {
+								const next = (e.currentTarget as HTMLSelectElement).value;
+								if (next === 'cartesian' || next === 'radial' || next === 'polar') {
+									v.layout = next;
+								}
+							}}
+						>
+							<option value="cartesian">Cartesian</option>
+							<option value="radial">Radial (overlay)</option>
+							<option value="polar">Polar (warped)</option>
+						</select>
+						{#if v.layout === 'radial' || v.layout === 'polar'}
+							<select
+								class="view-layout"
+								title="frame / overlay shape"
+								value={v.shape ?? 'circle'}
+								onchange={(e) => {
+									const next = (e.currentTarget as HTMLSelectElement).value;
+									v.shape = next === 'pie' ? 'pie' : 'circle';
+								}}
+							>
+								<option value="circle">Circle</option>
+								<option value="pie">Pie</option>
+							</select>
+						{/if}
+						<label class="view-channel">
+							<span class="muted">{v.layout === 'polar' ? 'length' : 'x'}</span>
+							<select
+								value={refToCode(v.x)}
+								onchange={(e) => {
+									const r = codeToRef((e.currentTarget as HTMLSelectElement).value);
+									if (r !== undefined) v.x = r;
+								}}
+							>
+								{#each Array(dimensions) as _, axIdx (axIdx)}
+									<option value={`axis-${axIdx}`}>{axes[axIdx]?.name || `axis ${axIdx + 1}`}</option
+									>
+								{/each}
+								<option value="time">time</option>
+							</select>
+							<input
+								type="text"
+								class="view-label"
+								bind:value={v.x_label}
+								placeholder="label"
+								maxlength="32"
+								title="optional override for the x / length channel name"
+							/>
+						</label>
+						<label class="view-channel">
+							<span class="muted">{v.layout === 'polar' ? 'angle' : 'y'}</span>
+							<select
+								value={refToCode(v.y)}
+								onchange={(e) => {
+									const r = codeToRef((e.currentTarget as HTMLSelectElement).value);
+									if (r !== undefined) v.y = r;
+								}}
+							>
+								{#each Array(dimensions) as _, axIdx (axIdx)}
+									<option value={`axis-${axIdx}`}>{axes[axIdx]?.name || `axis ${axIdx + 1}`}</option
+									>
+								{/each}
+								<option value="time">time</option>
+							</select>
+							<input
+								type="text"
+								class="view-label"
+								bind:value={v.y_label}
+								placeholder="label"
+								maxlength="32"
+								title="optional override for the y / angle channel name"
+							/>
+						</label>
+						<label class="view-channel">
+							<span class="muted">colour</span>
+							<select
+								value={refToCode(v.color)}
+								onchange={(e) => {
+									v.color = codeToRef((e.currentTarget as HTMLSelectElement).value);
+								}}
+							>
+								<option value="none">(none)</option>
+								{#each Array(dimensions) as _, axIdx (axIdx)}
+									<option value={`axis-${axIdx}`}>{axes[axIdx]?.name || `axis ${axIdx + 1}`}</option
+									>
+								{/each}
+								<option value="time">time</option>
+							</select>
+						</label>
+						<button
+							type="button"
+							class="ghost remove"
+							onclick={() => removeCustomView(i)}
+							aria-label="remove view"
+						>
+							×
+						</button>
+					</div>
+				{/each}
+				<button type="button" class="ghost" onclick={addCustomView}>+ add view</button>
 			</fieldset>
 		{/if}
 	{:else}
@@ -753,6 +982,51 @@
 		grid-template-columns: minmax(0, 1fr) 90px 90px auto auto;
 		gap: var(--space-2);
 		align-items: center;
+	}
+	.pwp-row.pwp-row-3d {
+		grid-template-columns: minmax(0, 1fr) 80px 80px 80px auto auto;
+	}
+
+	.view-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+		align-items: center;
+		padding: var(--space-2);
+		background: rgba(255, 255, 255, 0.02);
+		border: 1px solid rgba(255, 255, 255, 0.06);
+		border-radius: 4px;
+	}
+	.view-row .view-name {
+		flex: 1 1 140px;
+		min-width: 100px;
+	}
+	.view-row .view-layout {
+		flex: 0 0 auto;
+	}
+	.view-row .view-name,
+	.view-row .view-layout,
+	.view-row .view-channel input.view-label,
+	.view-row .view-channel select {
+		background: rgba(0, 0, 0, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-fg);
+		padding: var(--space-1) var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+	}
+	.view-channel {
+		display: inline-flex;
+		gap: var(--space-1);
+		align-items: center;
+		font-size: 0.85em;
+	}
+	.view-channel .muted {
+		color: var(--color-muted);
+		min-width: 12px;
+	}
+	.view-channel input.view-label {
+		width: 90px;
 	}
 	.pwp-row input {
 		background: rgba(0, 0, 0, 0.25);

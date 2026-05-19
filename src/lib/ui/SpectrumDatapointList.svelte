@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Axis, SpectrumDatapoint, SpectrumGraph } from '$lib/types.js';
+	import type { Axis, SpectrumDatapoint, SpectrumGraph, SpectrumView } from '$lib/types.js';
 	import SpectrumDatapointForm from './SpectrumDatapointForm.svelte';
 
 	let {
@@ -7,13 +7,16 @@
 		axes,
 		graph,
 		onremove,
-		onedit
+		onedit,
+		view
 	}: {
 		datapoints: SpectrumDatapoint[];
 		axes: Axis[];
 		graph: SpectrumGraph;
 		onremove: (id: string) => void;
 		onedit: (dp: SpectrumDatapoint) => void;
+		// Forwarded to inline edit forms so picker layout matches the chart.
+		view?: SpectrumView;
 	} = $props();
 
 	const sorted = $derived([...datapoints].sort((a, b) => b.timestamp.localeCompare(a.timestamp)));
@@ -53,6 +56,7 @@
 					{#if editingId === dp.id}
 						<SpectrumDatapointForm
 							{graph}
+							{view}
 							initial={dp}
 							onsubmit={handleSave}
 							oncancel={() => (editingId = null)}

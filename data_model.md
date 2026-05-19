@@ -79,7 +79,7 @@ A point waypoint is a labeled landmark at a specific position in the coordinate 
 | `coordinates` | `number[]` | length must equal graph dimensionality |
 | `color` | string | optional |
 
-Rendered in v1 on 2D graphs as a small marker (e.g. cross/plus) with its label. 1D graphs typically use per-axis waypoints instead. 3D rendering of point waypoints is deferred along with the rest of 3D rendering.
+Rendered in v1 on 2D and 3D graphs as a small cross-style marker with its label. 1D graphs typically use per-axis waypoints instead. On 3D scatters the cross tints to the colour the ramp would produce at `coordinates[2]` when no explicit `color` is set, so the landmark visually belongs to the same colour-axis space as the datapoints.
 
 ### 3.4 Regions
 
@@ -126,6 +126,20 @@ How a spectrum graph's history is visualized depends on dimensionality:
 | 1D | line plot, x = time, y = value |
 | 2D | scatter cloud over the 2D space; optional density/heatmap; optional time-colored trail |
 | 3D | 2D scatter on axes 0/1, with axis 2 encoded as colour via a ramp interpolated over the graph's palette. A colour-bar legend labels the ramp's `min_label`, `max_label`, and `zero_label` (when applicable). |
+
+A spectrum graph supports **multiple views** over the same underlying datapoints — each view picks a layout (`cartesian`, `radial`, or `polar`) and assigns the graph's axes (or the implicit time axis) to the visual channels (x, y, optionally colour). Clients always start from a default set of presets per dimensionality, and any views saved on `customization.views` are appended to that preset list (so adding one custom view doesn't strip access to the standard projections). The presets are:
+
+- 1D — `Default` (time × value).
+- 2D — `Cartesian`, `Side` (time × axis 2), `Top` (time × axis 1), `Radial` (overlay), `Polar` (warped).
+- 3D — three cartesian axis-permutations with the remaining axis as colour, a `Side` time projection, and a radial-overlay variant.
+
+The three layouts handle the cartesian-vs-polar distinction differently:
+
+- **`cartesian`** — standard scatter plot. Each datapoint is placed at `(xScale(coords[view.x]), yScale(coords[view.y]))`.
+- **`radial`** — by default keeps cartesian positions and overlays a polar grid on top: concentric "length" ellipses centred at `(axis-x = 0, axis-y = 0)` plus angle spokes through the same origin. Lets users read the polar coordinates of any cartesian point off the chart without re-projecting the data. With `shape: "pie"`, the layout becomes the polar-conversion-plus-pie-sector display (see `polar`) so `radial + pie` and `polar + pie` produce the same visualization through different form paths.
+- **`polar`** — polar conversion: each datapoint is replotted at `(length = sqrt(x² + y²), angle = atan2(y, x))` in pixel space. So a graph with axes (`enbiness ∈ [-1, 1]`, `girliness ∈ [0, 1.1]`) renders with length = combined magnitude, angle = orientation. The picker reverses the conversion on input. With `shape: "pie"` the outer frame is drawn as a pie sector restricted to the angular range actually reachable from the axis ranges (e.g. those axes only cover the upper semicircle, so `pie` carves the plot into a half-disc).
+
+Views can override channel names via optional `x_label` / `y_label` fields (e.g. `x_label: "genderness"`, `y_label: "gender"` on a polar view backed by `enbiness × girliness`). Views are presentation-only: data is unchanged across views.
 
 These are display choices made by the client, not properties stored on the graph. The graph stores datapoints; the client decides how to draw them.
 
@@ -193,6 +207,7 @@ Spectrum-specific:
 | `axis_style.line_color` | string | |
 | `axis_style.label_color` | string | |
 | `region_style.default_opacity` | number | global default |
+| `views` | list of `{id, name, layout: "cartesian"\|"radial"\|"polar", x: AxisRef, y: AxisRef, color?: AxisRef, x_label?: string, y_label?: string, shape?: "circle"\|"pie"}` | optional saved views; `AxisRef` is an axis index (0..N-1) or the literal string `"time"`. `radial` defaults to cartesian positions + polar overlay (`shape="circle"`); `polar` re-projects to length/angle pixel coords. `shape="pie"` switches to a polar-conversion-with-pie-sector display in either layout. `x_label`/`y_label` override channel display names. When unset, clients generate dimensionality-based presets — see §3.6. |
 
 Network-specific:
 
@@ -264,11 +279,11 @@ Full Matrix protocol mapping lives in `sharing_model.md`. High-level:
 
 Explicitly deferred (acknowledged but not implemented in MVP):
 
-- **Multiple computed representations of the same underlying data.** E.g. a single canonical gender state projected onto two different axis systems. v1 treats each graph as independent storage; if you want two views, you maintain two graphs by hand.
+- **Computed projections between distinct axis systems.** Multiple presentation views of the same data are now first-class (§3.6, §5), but transforming the same canonical state into a *different* axis system (e.g. one gender state projected onto both an "agender↔non-binary × agender↔women" plane and a "genderness × women-to-enby" plane with computed mapping) still requires maintaining two graphs by hand.
 - **3D regions.** 3D scatter datapoints are reachable in v1; labeled 3D regions (boxes, volumes) are not.
 - **Network graph history.** Network state is point-in-time in v1.
 - **Per-viewer legend redaction at the crypto level** (single room with selective decryption). Handled instead via redundant rooms — see `sharing_model.md`.
-- **3D point waypoints.** Point waypoints in 2D are supported (§3.3); 3D point waypoints (placed at `(x, y, z)` and colour-ramped on the 3D scatter) are deferred — the form's waypoint editor is currently 2D-only.
+- **Region rendering in non-default views.** Regions render in their original cartesian coordinates (the natural-default view). When viewing a graph through a radial view or a time projection, regions are not re-projected and aren't drawn. Authoring regions in non-default coordinate systems is deferred.
 - **Computed/derived datapoints** (e.g. "averaged over last week"). v1 stores raw points; clients may render rolling averages but don't persist them.
 - **Discrete / categorical spectrum axes.** v1 axes are continuous numeric. A categorical axis option is plausibly v1.1.
 - **Linked-node graph navigation.** Nodes with confirmed `subject_ref` are *named* but not navigable in v1 — clicking them does not surface that user's other graphs. The richer feature (cross-graph navigation gated on the linked user's separate share grants) is a v2 extension.

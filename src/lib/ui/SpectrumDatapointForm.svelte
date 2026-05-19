@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { Axis, SpectrumDatapoint, SpectrumGraph } from '$lib/types.js';
+	import type { Axis, SpectrumDatapoint, SpectrumGraph, SpectrumView } from '$lib/types.js';
 	import SpectrumPointPicker from './SpectrumPointPicker.svelte';
 	import ColorPickerWithPalette from './ColorPickerWithPalette.svelte';
 
@@ -8,12 +8,16 @@
 		graph,
 		initial,
 		oncancel,
-		onsubmit
+		onsubmit,
+		view
 	}: {
 		graph: SpectrumGraph;
 		initial?: SpectrumDatapoint;
 		oncancel?: () => void;
 		onsubmit: (dp: SpectrumDatapoint) => void;
+		// Forwarded to the picker so its layout matches the active chart
+		// view (e.g. circular pad when the view is radial).
+		view?: SpectrumView;
 	} = $props();
 
 	const isEdit = $derived(initial !== undefined);
@@ -111,6 +115,7 @@
 			{graph}
 			bind:coordinates={coords}
 			excludeDatapointId={initial?.id}
+			{view}
 		/>
 	</div>
 

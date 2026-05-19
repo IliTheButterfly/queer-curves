@@ -40,7 +40,13 @@ export default tseslint.config(
 			// Static internal paths are fine in v0; we'll revisit when we wire
 			// up dynamic / typed route resolution (e.g. resolveRoute from
 			// $app/paths) once the route surface is more than a handful of paths.
-			'svelte/no-navigation-without-resolve': 'off'
+			'svelte/no-navigation-without-resolve': 'off',
+			// We use plain Set/Map as compute-once data structures inside
+			// $derived blocks (filtering, deduping, graph traversal). We don't
+			// rely on reactivity through them — the surrounding $derived re-runs
+			// from its tracked inputs. Use SvelteSet/SvelteMap explicitly when
+			// genuine reactive collections are needed.
+			'svelte/prefer-svelte-reactivity': 'off'
 		}
 	},
 	{

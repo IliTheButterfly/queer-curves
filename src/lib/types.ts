@@ -43,6 +43,58 @@ export interface SpectrumCustomization extends BaseCustomization {
 	region_style?: {
 		default_opacity?: number;
 	};
+	// Optional saved views over the same datapoints. When unset, clients
+	// derive a sensible set of presets based on dimensionality (see §3.6).
+	views?: SpectrumView[];
+}
+
+// A reference to one of the graph's axes by index (0..N-1) or to the
+// implicit time axis (datapoint timestamps). Used by SpectrumView to map
+// axes onto visual channels.
+export type AxisRef = number | 'time';
+
+export type SpectrumViewLayout = 'cartesian' | 'radial' | 'polar';
+
+// A SpectrumView is a saved configuration for visualising the graph's
+// datapoints. The same data can be projected through multiple views — the
+// classic 2D scatter, a polar plot, a radial-overlay over cartesian, or a
+// time-vs-axis side view — without duplicating the underlying data.
+export interface SpectrumView {
+	id: string;
+	name: string;
+	// 'cartesian' = (x, y) plot.
+	// 'radial' = cartesian positions, with a polar overlay drawn on top:
+	//   concentric "length" ellipses centred at (axis-x = 0, axis-y = 0)
+	//   and angle spokes through the same origin. Points and the picker
+	//   stay in cartesian axis space; only the gridlines change so users
+	//   can read the polar coordinates of any cartesian point off the
+	//   chart.
+	// 'polar' = polar conversion: x and y are read as cartesian axes, then
+	//   converted to length = sqrt(x² + y²) and angle = atan2(y, x), and
+	//   each datapoint is REPLOTTED at the polar pixel position. The
+	//   picker reverses the conversion on input. Coords remain stored in
+	//   cartesian axis space, but the visual position of points differs
+	//   from the cartesian view.
+	layout: SpectrumViewLayout;
+	x: AxisRef;
+	y: AxisRef;
+	// When set, datapoints are coloured via a ramp built from the palette
+	// over the referenced axis's range. 'time' uses the datapoints' time
+	// extent. When unset, clients fall back to per-datapoint colour
+	// overrides or palette cycling by time-order.
+	color?: AxisRef;
+	// Optional display-name overrides for the visual channels. For radial
+	// views these become the "length" and "angle" labels (e.g. "genderness"
+	// and "gender") so the view's perspective doesn't have to share names
+	// with its underlying axes.
+	x_label?: string;
+	y_label?: string;
+	// Shape of the radial overlay (only meaningful when layout = 'radial').
+	// 'circle' draws full concentric ellipses + 360° of spokes. 'pie'
+	// restricts the overlay to the angular range actually reachable given
+	// the axis ranges — e.g. axes (`[-1, 1]`, `[0, 1.1]`) only cover the
+	// upper semicircle, so the overlay becomes a half-pie.
+	shape?: 'circle' | 'pie';
 }
 
 export type LegendPosition = 'top' | 'bottom' | 'left' | 'right' | 'hidden';

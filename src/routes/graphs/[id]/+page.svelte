@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
+	import { activeViews } from '$lib/graphs/spectrum/views.js';
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
+	import GraphStats from '$lib/ui/GraphStats.svelte';
 	import SpectrumDatapointForm from '$lib/ui/SpectrumDatapointForm.svelte';
 	import SpectrumDatapointList from '$lib/ui/SpectrumDatapointList.svelte';
 	import NetworkNodeForm from '$lib/ui/NetworkNodeForm.svelte';
@@ -27,6 +29,15 @@
 	// fresh data — no separate local mutable copy to keep in sync.
 	const graph = $derived(data.graph);
 	const isUserGraph = $derived(data.isUserGraph);
+
+	// View selector state — only meaningful for spectrum graphs. The dropdown
+	// is hidden when there's only one view available (1D, or a custom-views
+	// list of length 1).
+	const spectrumViews = $derived(graph.type === 'spectrum' ? activeViews(graph) : []);
+	let selectedViewId = $state<string | null>(null);
+	const activeView = $derived(
+		spectrumViews.find((v) => v.id === selectedViewId) ?? spectrumViews[0]
+	);
 
 	async function persist(updated: Graph) {
 		if (isUserGraph) {
@@ -179,20 +190,39 @@
 		{/if}
 	</p>
 
+	{#if graph.type === 'spectrum' && spectrumViews.length > 1}
+		<div class="view-selector">
+			<label>
+				<span class="muted">View:</span>
+				<select
+					value={selectedViewId ?? spectrumViews[0]?.id ?? ''}
+					onchange={(e) => (selectedViewId = (e.currentTarget as HTMLSelectElement).value)}
+				>
+					{#each spectrumViews as v (v.id)}
+						<option value={v.id}>{v.name}</option>
+					{/each}
+				</select>
+			</label>
+		</div>
+	{/if}
+
 	<div class="chart">
 		{#if graph.type === 'spectrum'}
-			<SpectrumHistoryChart {graph} />
+			<SpectrumHistoryChart {graph} view={activeView} />
 		{:else}
 			<NetworkChart {graph} onPositionsChange={handleNetworkPositions} />
 		{/if}
 	</div>
 
+	<GraphStats {graph} />
+
 	{#if isUserGraph}
 		<section class="editors">
 			{#if graph.type === 'spectrum'}
-				<SpectrumDatapointForm {graph} onsubmit={handleAddDatapoint} />
+				<SpectrumDatapointForm {graph} view={activeView} onsubmit={handleAddDatapoint} />
 				<SpectrumDatapointList
 					{graph}
+					view={activeView}
 					datapoints={graph.datapoints}
 					axes={graph.schema.axes}
 					onremove={handleRemoveDatapoint}
@@ -240,6 +270,23 @@
 		border-radius: 999px;
 		font-size: 0.75em;
 		color: var(--color-muted);
+	}
+	.view-selector {
+		margin-top: var(--space-3);
+		font-size: 0.9em;
+	}
+	.view-selector label {
+		display: inline-flex;
+		gap: var(--space-2);
+		align-items: center;
+	}
+	.view-selector select {
+		background: rgba(0, 0, 0, 0.3);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: var(--color-fg);
+		padding: var(--space-1) var(--space-2);
+		border-radius: 4px;
+		font: inherit;
 	}
 	.chart {
 		margin-top: var(--space-3);

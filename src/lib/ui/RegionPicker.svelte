@@ -59,7 +59,11 @@
 
 	type BoxRefs = {
 		rect: d3.Selection<SVGRectElement, unknown, null, undefined>;
-		handles: { cornerX: 'min' | 'max'; cornerY: 'min' | 'max'; el: d3.Selection<SVGCircleElement, unknown, null, undefined> }[];
+		handles: {
+			cornerX: 'min' | 'max';
+			cornerY: 'min' | 'max';
+			el: d3.Selection<SVGCircleElement, unknown, null, undefined>;
+		}[];
 		xs: d3.ScaleLinear<number, number>;
 		ys: d3.ScaleLinear<number, number>;
 	};
