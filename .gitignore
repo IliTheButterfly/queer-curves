@@ -21,6 +21,9 @@ dist
 npm-debug.log*
 pnpm-debug.log*
 
+# Local dev infrastructure (Synapse state — signing keys, SQLite DB, media)
+data/
+
 # Test artifacts
 coverage
 test-results
