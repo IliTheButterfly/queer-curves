@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { login, register } from '$lib/matrix/client.js';
+	import { getCryptoStatus, login, register } from '$lib/matrix/client.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 
 	type Mode = 'login' | 'register';
@@ -23,7 +23,12 @@
 					? await login({ baseUrl, username, password })
 					: await register({ baseUrl, username, password });
 			matrixStore.session = session;
-			await goto('/');
+			matrixStore.cryptoStatus = await getCryptoStatus();
+			// First-time users (registration, or login on a fresh device)
+			// haven't set up cross-signing yet — send them to the key-setup
+			// wizard before they can do anything else.
+			const dest = matrixStore.cryptoStatus.ready ? '/' : '/setup-keys';
+			await goto(dest);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {

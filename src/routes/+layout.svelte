@@ -1,16 +1,28 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import '../app.css';
-	import { logout, restoreSession } from '$lib/matrix/client.js';
+	import { getCryptoStatus, logout, restoreSession } from '$lib/matrix/client.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 
 	let { children } = $props();
 	let loggingOut = $state(false);
 
+	const cryptoBannerVisible = $derived(
+		matrixStore.hydrated &&
+			matrixStore.session !== null &&
+			matrixStore.cryptoStatus !== null &&
+			!matrixStore.cryptoStatus.ready &&
+			page.url.pathname !== '/setup-keys'
+	);
+
 	onMount(async () => {
 		try {
 			const restored = await restoreSession();
 			matrixStore.session = restored;
+			if (restored) {
+				matrixStore.cryptoStatus = await getCryptoStatus();
+			}
 		} catch {
 			matrixStore.session = null;
 		} finally {
@@ -24,6 +36,7 @@
 		try {
 			await logout();
 			matrixStore.session = null;
+			matrixStore.cryptoStatus = null;
 		} finally {
 			loggingOut = false;
 		}
@@ -47,6 +60,16 @@
 		{/if}
 	</div>
 </header>
+
+{#if cryptoBannerVisible}
+	<aside class="banner" role="status">
+		<span>
+			Encryption keys aren't set up on this account yet. Until they are, you can't create or share
+			Matrix-backed graphs.
+		</span>
+		<a class="banner-link" href="/setup-keys">Set up now →</a>
+	</aside>
+{/if}
 
 {@render children()}
 
@@ -106,5 +129,28 @@
 	button.link:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+
+	.banner {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: var(--space-3);
+		padding: var(--space-2) var(--space-4);
+		background: rgba(255, 200, 80, 0.08);
+		border-bottom: 1px solid rgba(255, 200, 80, 0.2);
+		font-size: 0.9em;
+		color: rgba(255, 220, 160, 1);
+	}
+	.banner-link {
+		color: rgba(255, 220, 160, 1);
+		text-decoration: none;
+		padding: var(--space-1) var(--space-3);
+		border: 1px solid rgba(255, 200, 80, 0.3);
+		border-radius: 4px;
+		white-space: nowrap;
+	}
+	.banner-link:hover {
+		background: rgba(255, 200, 80, 0.12);
 	}
 </style>
