@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { getCryptoStatus, login, register } from '$lib/matrix/client.js';
+	import { checkKeyRestoreNeeded, getCryptoStatus, login, register } from '$lib/matrix/client.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 
 	type Mode = 'login' | 'register';
@@ -24,10 +24,22 @@
 					: await register({ baseUrl, username, password });
 			matrixStore.session = session;
 			matrixStore.cryptoStatus = await getCryptoStatus();
-			// First-time users (registration, or login on a fresh device)
-			// haven't set up cross-signing yet — send them to the key-setup
-			// wizard before they can do anything else.
-			const dest = matrixStore.cryptoStatus.ready ? '/' : '/setup-keys';
+			// Routing after login is three-way:
+			//   - server has no crypto yet → /setup-keys (first time)
+			//   - server has crypto but this device hasn't pulled the keys
+			//     out of secret storage yet → /restore-keys. Sending the user
+			//     to /setup-keys here would *re-bootstrap* their cross-signing
+			//     identity and orphan the existing key backup, making old
+			//     encrypted history permanently unreadable.
+			//   - everything ready locally → home.
+			let dest = '/';
+			if (!matrixStore.cryptoStatus.ready) {
+				dest = '/setup-keys';
+			} else {
+				const restoreState = await checkKeyRestoreNeeded();
+				matrixStore.needsKeyRestore = restoreState.needsRestore;
+				if (restoreState.needsRestore) dest = '/restore-keys';
+			}
 			await goto(dest);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);

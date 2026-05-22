@@ -315,9 +315,14 @@ export interface KeyRestoreNeeded {
  * Detect whether this freshly-logged-in device is missing the keys it
  * needs to read encrypted history. The signal we use:
  *  - server has a key backup, AND
- *  - we have no active backup decryption key locally (so all room keys are
- *    fetched ad-hoc, which can't recover history sent before this device
- *    existed).
+ *  - we have no backup decryption key cached locally (so message decryption
+ *    has nothing to ask key backup for; previously-sent megolm sessions
+ *    stay un-imported).
+ *
+ * `getSessionBackupPrivateKey()` reads from the local rust-crypto IDB,
+ * where `restoreFromRecoveryKey` parks the key after a successful restore.
+ * Once that's persisted, this returns needsRestore=false across page
+ * reloads — the user only restores on a brand-new device.
  *
  * Returns false-y in three cases: not logged in, no backup on the server,
  * or we already have the backup decryption key cached locally.
@@ -340,8 +345,8 @@ export async function checkKeyRestoreNeeded(): Promise<KeyRestoreNeeded> {
 	}
 	if (!out.hasBackup) return out;
 	try {
-		const cachedVersion = await crypto.getActiveSessionBackupVersion();
-		out.needsRestore = cachedVersion === null;
+		const cachedKey = await crypto.getSessionBackupPrivateKey();
+		out.needsRestore = cachedKey === null;
 	} catch {
 		out.needsRestore = true;
 	}
@@ -448,6 +453,26 @@ export async function setupCrypto(): Promise<CryptoSetupResult> {
 	}
 	const session = loadSession();
 	if (!session) throw new Error('No active session');
+
+	// Hard guard against destructive re-setup. If cross-signing already
+	// exists on the server, running bootstrapCrossSigning + setupNewSecretStorage
+	// here would generate a fresh master key and orphan the existing key
+	// backup — every encrypted message ever sent on this account becomes
+	// permanently unreadable. The recover path is /restore-keys.
+	try {
+		if (await crypto.userHasCrossSigningKeys()) {
+			throw new Error(
+				'This account already has encryption keys set up. Use the "Restore from recovery key" page to unlock existing graphs on this device instead of generating new keys (which would orphan your existing data).'
+			);
+		}
+	} catch (e) {
+		// Re-throw our own message; swallow network errors and continue
+		// (better the user can retry setup than be permanently blocked by a
+		// transient /keys/query failure).
+		if (e instanceof Error && /already has encryption keys/.test(e.message)) {
+			throw e;
+		}
+	}
 
 	const password = _pendingAuthPassword;
 
