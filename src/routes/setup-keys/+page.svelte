@@ -123,6 +123,13 @@
 				A password manager works. A piece of paper in a safe place works. Anything that survives
 				this device being lost or wiped.
 			</p>
+			<p class="muted">
+				<small>
+					You'll need this key again every time you log in on a new device or a fresh browser —
+					paste it on the <a href="/restore-keys">Restore from recovery key</a> page to unlock your existing
+					graphs.
+				</small>
+			</p>
 		</section>
 
 		<div class="recovery-key" aria-label="recovery key">
