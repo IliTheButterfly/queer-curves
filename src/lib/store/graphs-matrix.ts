@@ -169,3 +169,83 @@ export async function deleteMatrixGraph(id: string): Promise<void> {
 		// ignore — graph may already be gone server-side
 	}
 }
+
+export interface GraphMember {
+	userId: string;
+	displayName: string;
+	/** join | invite | leave | ban — straight from m.room.member content. */
+	membership: string;
+}
+
+export async function listMatrixGraphMembers(id: string): Promise<GraphMember[]> {
+	const client = requireClient();
+	const room = client.getRoom(id);
+	if (!room) return [];
+	return room.currentState.getMembers().map((m) => ({
+		userId: m.userId,
+		displayName: m.name ?? m.userId,
+		membership: m.membership ?? 'leave'
+	}));
+}
+
+/**
+ * Invite a Matrix user (`@bob:server`) to a graph room. Megolm session keys
+ * are shared automatically by the SDK once the invitee joins, so they can
+ * read everything from their join point forward; older messages stay
+ * unreadable to them unless the inviter explicitly shares history via key
+ * backup or device-to-device key forwarding (sharing_model.md §7).
+ */
+export async function inviteToMatrixGraph(graphId: string, userId: string): Promise<void> {
+	const client = requireClient();
+	const trimmed = userId.trim();
+	if (!trimmed) throw new Error('Enter a Matrix user id (e.g. @alice:localhost).');
+	if (!/^@[^:]+:[^@:]+$/.test(trimmed)) {
+		throw new Error(
+			"That doesn't look like a Matrix user id. Expected the form @localpart:server.tld"
+		);
+	}
+	if (trimmed === client.getUserId()) {
+		throw new Error("That's your own account — you already have access.");
+	}
+	await client.invite(graphId, trimmed);
+}
+
+/** Pending invites to OUR rooms — graphs other users invited this account to. */
+export interface PendingInvite {
+	roomId: string;
+	roomName: string | null;
+	invitedBy: string | null;
+}
+
+export async function listPendingMatrixInvites(): Promise<PendingInvite[]> {
+	const client = requireClient();
+	const userId = client.getUserId();
+	if (!userId) return [];
+	const out: PendingInvite[] = [];
+	for (const room of client.getRooms()) {
+		const me = room.getMember(userId);
+		if (!me || me.membership !== 'invite') continue;
+		// We can't filter invites by the `app.queercurves.marker` state
+		// event the way we filter joined rooms — invited users only receive
+		// the room's "stripped state" (m.room.name, m.room.member for the
+		// two participants, m.room.join_rules, m.room.avatar). Custom state
+		// events aren't included until they actually join. Show every
+		// pending invite and trust the user to decline anything unexpected.
+		out.push({
+			roomId: room.roomId,
+			roomName: room.name ?? null,
+			invitedBy: me.events.member?.getSender() ?? null
+		});
+	}
+	return out;
+}
+
+export async function acceptMatrixInvite(roomId: string): Promise<void> {
+	const client = requireClient();
+	await client.joinRoom(roomId);
+}
+
+export async function declineMatrixInvite(roomId: string): Promise<void> {
+	const client = requireClient();
+	await client.leave(roomId);
+}

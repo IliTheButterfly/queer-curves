@@ -269,8 +269,71 @@ async function startClient(session: MatrixSession): Promise<void> {
 	_client.on('Room.timeline' as never, bump as never);
 	_client.on('Room.myMembership' as never, bump as never);
 	_client.on('Event.decrypted' as never, bump as never);
+
+	// When a new member joins one of our graph rooms, re-send the latest
+	// snapshot so the new member's megolm session sees the graph. matrix's
+	// design: the megolm session at the time of a send is shared with the
+	// then-joined members. Anyone who joins later only sees messages sent
+	// *after* their join. Without this hook, an invitee would join an empty
+	// room — the snapshot the inviter wrote before sending the invite is
+	// encrypted with a session the invitee never received.
+	_client.on(
+		'RoomState.events' as never,
+		((
+			event: { getType(): string; getStateKey(): string; getRoomId(): string },
+			_state: unknown,
+			prevEvent: { getContent(): { membership?: string } } | null
+		) => {
+			if (event.getType() !== 'm.room.member') return;
+			const content = (event as unknown as { getContent(): { membership?: string } }).getContent();
+			const prev = prevEvent?.getContent()?.membership;
+			// We only care about transitions INTO 'join' (so we don't re-fire on
+			// every state update for an already-joined user) and we skip our own
+			// joins to avoid an infinite loop.
+			if (content.membership !== 'join') return;
+			if (prev === 'join') return;
+			const userId = event.getStateKey();
+			if (userId === _client?.getUserId()) return;
+			const roomId = event.getRoomId();
+			void reshareSnapshotIfOurs(roomId);
+		}) as never
+	);
 	await _client.startClient({ filter });
 	await prepared;
+}
+
+/**
+ * When a new member joins one of our graph rooms, the latest snapshot in
+ * that room is encrypted with a megolm session that excludes the joiner.
+ * Re-send the snapshot — the new send rotates the session to include all
+ * currently-joined members, so the joiner can decrypt this fresh copy and
+ * see the graph. findLatestGraph walks backwards and picks the newest
+ * decryptable snapshot, so a duplicate at the end is harmless for older
+ * devices.
+ */
+async function reshareSnapshotIfOurs(roomId: string): Promise<void> {
+	if (!_client) return;
+	const room = _client.getRoom(roomId);
+	if (!room) return;
+	// Lazy-import so we don't introduce a cycle. graphs-matrix imports
+	// from this file; we deliberately don't import the reverse direction
+	// at module load.
+	let mod;
+	try {
+		mod = await import('$lib/store/graphs-matrix.js');
+	} catch (e) {
+		console.warn('[qc.matrix] re-share import failed', e);
+		return;
+	}
+	const marker = room.currentState.getStateEvents(mod.MARKER_EVENT, '');
+	if (!marker) return;
+	const graph = mod.findLatestGraph(room.getLiveTimeline().getEvents());
+	if (!graph) return;
+	try {
+		await mod.saveMatrixGraph({ ...graph, id: roomId });
+	} catch (e) {
+		console.warn('[qc.matrix] re-share failed', e);
+	}
 }
 
 async function teardownClient(): Promise<void> {

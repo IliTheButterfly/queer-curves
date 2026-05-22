@@ -9,11 +9,20 @@
 import type { Graph } from '$lib/types.js';
 import { matrixStore } from '$lib/matrix/store.svelte.js';
 import {
+	acceptMatrixInvite,
+	declineMatrixInvite,
 	deleteMatrixGraph,
 	getMatrixGraph,
+	type GraphMember,
+	inviteToMatrixGraph,
+	listMatrixGraphMembers,
 	listMatrixGraphs,
+	listPendingMatrixInvites,
+	type PendingInvite,
 	saveMatrixGraph
 } from './graphs-matrix.js';
+
+export type { GraphMember, PendingInvite };
 
 const STORAGE_KEY = 'queer-curves:user-graphs';
 
@@ -161,6 +170,56 @@ export async function migrateLocalStorageToMatrix(): Promise<{
 		writeAll(readAll().filter((g) => !migratedIds.has(g.id)));
 	}
 	return { migrated: migratedIds.size, failed };
+}
+
+/**
+ * Sharing only works for Matrix-backed graphs. localStorage-id graphs
+ * have no remote endpoint to invite anyone to, so these helpers refuse
+ * for non-Matrix ids rather than silently no-op'ing.
+ */
+function requireMatrixId(id: string): void {
+	if (!isMatrixId(id)) {
+		throw new Error(
+			'This graph is only stored on your device. Move it to encrypted storage from the home page before sharing.'
+		);
+	}
+}
+
+export async function inviteToUserGraph(graphId: string, userId: string): Promise<void> {
+	await ensureHydrated();
+	requireMatrixId(graphId);
+	if (!shouldUseMatrix()) {
+		throw new Error('Log in and set up encryption to share graphs.');
+	}
+	await inviteToMatrixGraph(graphId, userId);
+}
+
+export async function listUserGraphMembers(graphId: string): Promise<GraphMember[]> {
+	await ensureHydrated();
+	if (!isMatrixId(graphId) || !shouldUseMatrix()) return [];
+	return await listMatrixGraphMembers(graphId);
+}
+
+export async function listPendingInvites(): Promise<PendingInvite[]> {
+	await ensureHydrated();
+	if (!shouldUseMatrix()) return [];
+	return await listPendingMatrixInvites();
+}
+
+export async function acceptInvite(roomId: string): Promise<void> {
+	await ensureHydrated();
+	if (!shouldUseMatrix()) {
+		throw new Error('Log in to accept invites.');
+	}
+	await acceptMatrixInvite(roomId);
+}
+
+export async function declineInvite(roomId: string): Promise<void> {
+	await ensureHydrated();
+	if (!shouldUseMatrix()) {
+		throw new Error('Log in to decline invites.');
+	}
+	await declineMatrixInvite(roomId);
 }
 
 export function generateGraphId(): string {
