@@ -414,8 +414,10 @@ export async function restoreFromRecoveryKey(encodedKey: string): Promise<KeyRes
 		// undecryptable until someone happens to share keys with us.
 		const result = await crypto.restoreKeyBackup();
 		// Bump the rooms epoch so any open list/detail view re-fetches now
-		// that previously-undecryptable snapshots can be read.
+		// that previously-undecryptable snapshots can be read; and clear the
+		// "needs restore" banner so the user isn't told to do it again.
 		matrixStore.roomsEpoch++;
+		matrixStore.needsKeyRestore = false;
 		return {
 			importedTotal: result.total,
 			importedNew: result.imported

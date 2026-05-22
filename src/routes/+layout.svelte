@@ -13,7 +13,6 @@
 
 	let { children } = $props();
 	let loggingOut = $state(false);
-	let needsRestore = $state(false);
 
 	const cryptoBannerVisible = $derived(
 		matrixStore.hydrated &&
@@ -27,7 +26,7 @@
 		matrixStore.hydrated &&
 			matrixStore.session !== null &&
 			matrixStore.cryptoStatus?.ready === true &&
-			needsRestore &&
+			matrixStore.needsKeyRestore &&
 			page.url.pathname !== '/restore-keys'
 	);
 
@@ -40,12 +39,13 @@
 				// If this device has crypto-ready on the server side but no
 				// cached backup-decryption-key locally, we need to ask the
 				// user for their recovery key before any existing graph will
-				// open.
+				// open. The /restore-keys page flips this back to false on
+				// success, so the banner disappears without a page reload.
 				try {
 					const restoreState = await checkKeyRestoreNeeded();
-					needsRestore = restoreState.needsRestore;
+					matrixStore.needsKeyRestore = restoreState.needsRestore;
 				} catch {
-					needsRestore = false;
+					matrixStore.needsKeyRestore = false;
 				}
 			}
 		} catch {
