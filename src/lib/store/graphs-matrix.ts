@@ -72,9 +72,16 @@ export async function listMatrixGraphs(): Promise<Graph[]> {
 	const client = requireClient();
 	const out: Graph[] = [];
 	for (const room of client.getRooms()) {
+		// Two ways to recognise our rooms: the `app.queercurves.marker`
+		// state event we set in initial_state, or any decrypted snapshot
+		// in the timeline. We accept either because matrix-js-sdk doesn't
+		// always have all state events in currentState immediately after
+		// /sync delivers a brand-new room — relying on the marker alone
+		// hides freshly-restored rooms from a second device until the next
+		// state push lands.
 		const marker = room.currentState.getStateEvents(MARKER_EVENT, '');
-		if (!marker) continue;
 		const graph = findLatestGraph(room.getLiveTimeline().getEvents());
+		if (!marker && !graph) continue;
 		if (graph) {
 			out.push({ ...graph, id: room.roomId });
 		}

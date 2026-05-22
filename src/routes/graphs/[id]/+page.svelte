@@ -193,6 +193,10 @@
 		await deleteUserGraph(graph.id);
 		await goto('/');
 	}
+
+	function pluralize(n: number, singular: string): string {
+		return `${n} ${n === 1 ? singular : singular + 's'}`;
+	}
 </script>
 
 <svelte:head>
@@ -224,9 +228,9 @@
 		{/if}
 		<p class="meta">
 			{#if graph.type === 'spectrum'}
-				{graph.schema.dimensions}D spectrum · {graph.datapoints.length} datapoints
+				{graph.schema.dimensions}D spectrum · {pluralize(graph.datapoints.length, 'datapoint')}
 			{:else}
-				network · {graph.nodes.length} nodes · {graph.edges.length} edges
+				network · {pluralize(graph.nodes.length, 'node')} · {pluralize(graph.edges.length, 'edge')}
 			{/if}
 			{#if !isUserGraph}
 				<span class="fixture-tag">fixture</span>
