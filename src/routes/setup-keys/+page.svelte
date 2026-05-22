@@ -1,6 +1,12 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { getCryptoStatus, hasPendingAuthPassword, setupCrypto } from '$lib/matrix/client.js';
+	import {
+		checkKeyRestoreNeeded,
+		getCryptoStatus,
+		hasPendingAuthPassword,
+		setupCrypto
+	} from '$lib/matrix/client.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 
 	type Stage = 'intro' | 'showing' | 'done';
@@ -11,6 +17,24 @@
 	let working = $state(false);
 	let error = $state<string | null>(null);
 	let copied = $state(false);
+
+	// If keys already exist on the server (user logged in on a new device,
+	// fresh browser, etc.) running setup here would generate a NEW master
+	// key and orphan the existing key backup forever. Redirect them to the
+	// restore flow before they can click anything.
+	onMount(async () => {
+		if (!matrixStore.session) return;
+		try {
+			const state = await checkKeyRestoreNeeded();
+			if (state.hasCrossSigning) {
+				matrixStore.needsKeyRestore = state.needsRestore;
+				await goto('/restore-keys');
+			}
+		} catch {
+			// best-effort — if the probe fails, leave the page as-is and the
+			// destructive guard inside setupCrypto() will still refuse.
+		}
+	});
 
 	async function handleGenerate() {
 		if (working) return;
@@ -122,6 +146,13 @@
 			<p class="muted">
 				A password manager works. A piece of paper in a safe place works. Anything that survives
 				this device being lost or wiped.
+			</p>
+			<p class="muted">
+				<small>
+					You'll need this key again every time you log in on a new device or a fresh browser —
+					paste it on the <a href="/restore-keys">Restore from recovery key</a> page to unlock your existing
+					graphs.
+				</small>
 			</p>
 		</section>
 

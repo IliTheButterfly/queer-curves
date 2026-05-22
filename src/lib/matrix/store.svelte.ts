@@ -10,6 +10,20 @@ class MatrixStore {
 	hydrated = $state(false);
 	/** Cached crypto status — refreshed after login / setup / restore. */
 	cryptoStatus = $state<CryptoStatus | null>(null);
+	/**
+	 * Increments whenever a Matrix sync delivers a new room or a new timeline
+	 * event in an existing room. The landing page and other graph-listing
+	 * views read this so they can re-fetch reactively as data trickles in
+	 * during a catch-up sync.
+	 */
+	roomsEpoch = $state(0);
+	/**
+	 * True when the layout has detected that this device has a server-side
+	 * key backup it hasn't pulled down yet — the user needs to enter their
+	 * recovery key on /restore-keys before existing graphs will open. Flipped
+	 * to false once the restore succeeds.
+	 */
+	needsKeyRestore = $state(false);
 
 	constructor() {
 		if (typeof window !== 'undefined') {

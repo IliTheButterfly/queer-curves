@@ -98,6 +98,5 @@ function validate(value: unknown): asserts value is Graph {
 export async function importGraphFromFile(file: File): Promise<Graph> {
 	const text = await file.text();
 	const graph = parseGraphJson(text);
-	saveUserGraph(graph);
-	return graph;
+	return await saveUserGraph(graph);
 }

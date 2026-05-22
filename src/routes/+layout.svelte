@@ -1,8 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import '../app.css';
-	import { getCryptoStatus, logout, restoreSession } from '$lib/matrix/client.js';
+	import {
+		checkKeyRestoreNeeded,
+		getCryptoStatus,
+		logout,
+		restoreSession
+	} from '$lib/matrix/client.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 
 	let { children } = $props();
@@ -16,12 +22,31 @@
 			page.url.pathname !== '/setup-keys'
 	);
 
+	const restoreBannerVisible = $derived(
+		matrixStore.hydrated &&
+			matrixStore.session !== null &&
+			matrixStore.cryptoStatus?.ready === true &&
+			matrixStore.needsKeyRestore &&
+			page.url.pathname !== '/restore-keys'
+	);
+
 	onMount(async () => {
 		try {
 			const restored = await restoreSession();
 			matrixStore.session = restored;
 			if (restored) {
 				matrixStore.cryptoStatus = await getCryptoStatus();
+				// If this device has crypto-ready on the server side but no
+				// cached backup-decryption-key locally, we need to ask the
+				// user for their recovery key before any existing graph will
+				// open. The /restore-keys page flips this back to false on
+				// success, so the banner disappears without a page reload.
+				try {
+					const restoreState = await checkKeyRestoreNeeded();
+					matrixStore.needsKeyRestore = restoreState.needsRestore;
+				} catch {
+					matrixStore.needsKeyRestore = false;
+				}
 			}
 		} catch {
 			matrixStore.session = null;
@@ -37,6 +62,11 @@
 			await logout();
 			matrixStore.session = null;
 			matrixStore.cryptoStatus = null;
+			// Any route gated on a logged-in session (e.g. /graphs/{room-id})
+			// would otherwise stay open after logout, showing the previous
+			// data or a stale UI. Send the user home where the route is
+			// session-agnostic.
+			await goto('/');
 		} finally {
 			loggingOut = false;
 		}
@@ -68,6 +98,14 @@
 			Matrix-backed graphs.
 		</span>
 		<a class="banner-link" href="/setup-keys">Set up now →</a>
+	</aside>
+{:else if restoreBannerVisible}
+	<aside class="banner" role="status">
+		<span>
+			This device hasn't unlocked your encrypted history yet. Paste your recovery key to read graphs
+			you made on other devices.
+		</span>
+		<a class="banner-link" href="/restore-keys">Restore now →</a>
 	</aside>
 {/if}
 

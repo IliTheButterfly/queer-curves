@@ -8,8 +8,8 @@
 	let { data }: { data: PageData } = $props();
 
 	async function handleSubmit(graph: Graph) {
-		saveUserGraph(graph);
-		await goto(`/graphs/${graph.id}`);
+		const saved = await saveUserGraph(graph);
+		await goto(`/graphs/${saved.id}`);
 	}
 </script>
 

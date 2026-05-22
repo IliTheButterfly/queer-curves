@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { fixtures, type Graph } from '$lib';
 	import { palettes } from '$lib/presets/palettes.js';
 	import { listUserGraphs } from '$lib/store/graphs.js';
 	import { importGraphFromFile } from '$lib/store/io.js';
+	import { matrixStore } from '$lib/matrix/store.svelte.js';
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
 
 	const fixtureGraphs: Graph[] = fixtures.allFixtures;
@@ -16,8 +16,25 @@
 		.filter((p) => ['pride', 'progress', 'trans', 'bi', 'lesbian', 'nb'].includes(p.id))
 		.slice(0, 6);
 
-	onMount(() => {
-		userGraphs = listUserGraphs();
+	// Refetch whenever the session/crypto state changes — switching from
+	// logged-out to logged-in (or vice versa) swaps the active store
+	// backend, so the list needs to reload. Also refetch when roomsEpoch
+	// bumps: on a fresh page load, matrix-js-sdk's initial /sync returns
+	// rooms only after several catch-up cycles, so we re-list as rooms
+	// arrive instead of trying to wait for everything up-front.
+	$effect(() => {
+		void matrixStore.session;
+		void matrixStore.cryptoStatus;
+		void matrixStore.roomsEpoch;
+		if (!matrixStore.hydrated) return;
+		(async () => {
+			try {
+				userGraphs = await listUserGraphs();
+			} catch (e) {
+				console.warn('listUserGraphs failed', e);
+				userGraphs = [];
+			}
+		})();
 	});
 
 	async function handleImport() {

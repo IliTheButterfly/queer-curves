@@ -5,8 +5,10 @@
 	import type { Graph } from '$lib/types.js';
 
 	async function handleSubmit(graph: Graph) {
-		saveUserGraph(graph);
-		await goto(`/graphs/${graph.id}`);
+		// Matrix path may rewrite graph.id to the new room's id, so route
+		// to whatever id the store actually persisted.
+		const saved = await saveUserGraph(graph);
+		await goto(`/graphs/${saved.id}`);
 	}
 </script>
 
