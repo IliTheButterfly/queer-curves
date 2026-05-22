@@ -201,7 +201,41 @@ async function startClient(session: MatrixSession): Promise<void> {
 	// Bring up Rust crypto with IndexedDB persistence before sync starts —
 	// otherwise the client can't decrypt anything and sync events that come
 	// through encrypted rooms are silently dropped to a re-decrypt queue.
-	await _client.initRustCrypto({ useIndexedDB: true });
+	//
+	// If the on-disk crypto store belongs to a different device id than the
+	// one we just got back from /login (most often: a previous logout's
+	// IndexedDB deletion got blocked while the rust crypto held the handles
+	// open, so the next login finds stale state), the SDK throws "account
+	// in the store doesn't match the account in the constructor". Catch
+	// that specific error once, wipe the store, and retry with a fresh
+	// matrix-js-sdk client — otherwise the user is stuck on /login with no
+	// path forward.
+	try {
+		await _client.initRustCrypto({ useIndexedDB: true });
+	} catch (e) {
+		if (e instanceof Error && /account in the store/i.test(e.message)) {
+			await teardownClient();
+			await clearCryptoStore();
+			_client = sdk.createClient({
+				baseUrl: session.baseUrl,
+				userId: session.userId,
+				accessToken: session.accessToken,
+				deviceId: session.deviceId,
+				useAuthorizationHeader: true,
+				cryptoCallbacks: {
+					getSecretStorageKey: async ({ keys }) => {
+						if (!_pendingSecretStorageKey) return null;
+						const keyId = Object.keys(keys)[0];
+						if (!keyId) return null;
+						return [keyId, _pendingSecretStorageKey];
+					}
+				}
+			});
+			await _client.initRustCrypto({ useIndexedDB: true });
+		} else {
+			throw e;
+		}
+	}
 	// matrix-js-sdk's default filter sets room.timeline.unread_thread_notifications
 	// (MSC3773). Synapse 1.144 (and at least the matrixdotorg/synapse:latest
 	// image at the time of writing) drops *all* joined rooms from the initial
@@ -243,6 +277,16 @@ async function teardownClient(): Promise<void> {
 	if (!_client) return;
 	try {
 		_client.stopClient();
+	} catch {
+		// no-op
+	}
+	// stopClient stops the sync loop but the rust crypto store keeps its
+	// IndexedDB connections open — which means a subsequent
+	// indexedDB.deleteDatabase() call gets stuck on `onblocked` instead of
+	// actually deleting. Calling stop() on the crypto backend releases
+	// those handles so logout's clearCryptoStore can finish.
+	try {
+		(_client.getCrypto() as unknown as { stop?: () => void } | undefined)?.stop?.();
 	} catch {
 		// no-op
 	}
@@ -389,10 +433,19 @@ export async function restoreFromRecoveryKey(encodedKey: string): Promise<KeyRes
 		// the main entrypoint).
 		bytes = sdk.Crypto.decodeRecoveryKey(trimmed);
 	} catch (e) {
-		throw new Error(
-			`That doesn't look like a valid recovery key (${e instanceof Error ? e.message : 'unknown error'})`,
-			{ cause: e }
-		);
+		// matrix-js-sdk surfaces low-level decode errors ("Incorrect parity",
+		// "Non-base58 character", "Incorrect length") that aren't actionable
+		// to a non-developer. Normalise them into one user-facing message.
+		const lower = e instanceof Error ? e.message.toLowerCase() : '';
+		let hint = "that doesn't look like a recovery key";
+		if (lower.includes('parity')) {
+			hint = 'the key has a typo or got truncated — double-check every character';
+		} else if (lower.includes('base58') || lower.includes('character')) {
+			hint = "that includes characters that aren't part of a recovery key";
+		} else if (lower.includes('length')) {
+			hint = 'the key is the wrong length';
+		}
+		throw new Error(`This recovery key doesn't look valid: ${hint}.`, { cause: e });
 	}
 
 	_pendingSecretStorageKey = bytes;
@@ -411,8 +464,17 @@ export async function restoreFromRecoveryKey(encodedKey: string): Promise<KeyRes
 
 		// Pull the backup decryption key out of secret storage and stash it
 		// in the local store so any future Unable-To-Decrypt errors trigger
-		// an auto-retry.
-		await crypto.loadSessionBackupPrivateKeyFromSecretStorage();
+		// an auto-retry. If the recovery key decoded fine but doesn't match
+		// what's actually in secret storage on the server, this is where the
+		// mismatch surfaces — wrap with a clearer message.
+		try {
+			await crypto.loadSessionBackupPrivateKeyFromSecretStorage();
+		} catch (e) {
+			throw new Error(
+				`The recovery key didn't match what's stored for this account. Check you copied it from this exact account's setup step.`,
+				{ cause: e }
+			);
+		}
 
 		// Download every megolm session the server has. Without this the
 		// session store stays empty and existing snapshots remain
