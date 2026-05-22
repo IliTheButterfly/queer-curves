@@ -18,6 +18,7 @@ import {
 	listMatrixGraphMembers,
 	listMatrixGraphs,
 	listPendingMatrixInvites,
+	matrixGraphCreator,
 	type PendingInvite,
 	saveMatrixGraph
 } from './graphs-matrix.js';
@@ -220,6 +221,21 @@ export async function declineInvite(roomId: string): Promise<void> {
 		throw new Error('Log in to decline invites.');
 	}
 	await declineMatrixInvite(roomId);
+}
+
+/**
+ * Whether the current user owns this graph. localStorage graphs are
+ * always owned by the local user; Matrix graphs are owned by the room
+ * creator. Used to gate the editing UI on /graphs/[id] — a graph you
+ * were invited to is read-only by default so you can't accidentally
+ * overwrite the owner's history.
+ */
+export function isOwnGraph(graphId: string): boolean {
+	if (!isMatrixId(graphId)) return true;
+	if (!shouldUseMatrix()) return false;
+	const creator = matrixGraphCreator(graphId);
+	const me = matrixStore.session?.userId ?? null;
+	return creator !== null && creator === me;
 }
 
 export function generateGraphId(): string {

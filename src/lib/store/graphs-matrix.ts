@@ -177,6 +177,25 @@ export interface GraphMember {
 	membership: string;
 }
 
+/**
+ * The creator of the room (the user who originally called createRoom).
+ * `m.room.create` events have a `creator` field in their content; even on
+ * room versions that drop it from the content, the event's sender is the
+ * creator. Returns null if the room (or its create event) isn't known
+ * locally yet.
+ */
+export function matrixGraphCreator(id: string): string | null {
+	const client = requireClient();
+	const room = client.getRoom(id);
+	if (!room) return null;
+	const create = room.currentState.getStateEvents('m.room.create', '');
+	if (!create) return null;
+	const ev = Array.isArray(create) ? create[0] : create;
+	if (!ev) return null;
+	const content = ev.getContent() as { creator?: string };
+	return content.creator ?? ev.getSender() ?? null;
+}
+
 export async function listMatrixGraphMembers(id: string): Promise<GraphMember[]> {
 	const client = requireClient();
 	const room = client.getRoom(id);
