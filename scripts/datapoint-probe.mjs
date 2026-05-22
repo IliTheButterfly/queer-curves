@@ -81,9 +81,26 @@ try {
 	await page.waitForURL((u) => !new URL(u).pathname.startsWith('/login'), { timeout: 30000 });
 	log('logged in, on:', page.url());
 
-	log('--- navigating to graph page ---');
+	log('--- navigating to graph page (expect Loading, no keys yet) ---');
 	await page.goto(graphUrl, { waitUntil: 'domcontentloaded' });
-	// Poll for up to 30s and report any time the datapoint count changes.
+	await page.waitForTimeout(3000);
+	const beforeRestore = (await page.locator('main').textContent()) ?? '';
+	const loadingBeforeRestore = /Loading graph/.test(beforeRestore);
+	log('graph page shows "Loading…" before restore:', loadingBeforeRestore);
+
+	log('--- restoring from recovery key ---');
+	await page.goto(`${DEV}/restore-keys`, { waitUntil: 'domcontentloaded' });
+	await page.locator('textarea').fill(rk ?? '');
+	await page.getByRole('button', { name: /Restore keys/i }).click();
+	// Result section shows "Restored N key(s)…"
+	await page.waitForSelector('text=/Restored/', { timeout: 30000 });
+	const restoreText = (await page.locator('main').textContent()) ?? '';
+	log('restore result:', restoreText.slice(0, 300));
+	await page.getByRole('button', { name: 'Continue' }).click();
+	await page.waitForURL((u) => new URL(u).pathname === '/', { timeout: 15000 });
+
+	log('--- navigating to graph page (expect datapoint visible) ---');
+	await page.goto(graphUrl, { waitUntil: 'domcontentloaded' });
 	let lastDp = -1;
 	for (let i = 0; i < 60; i++) {
 		await page.waitForTimeout(500);
