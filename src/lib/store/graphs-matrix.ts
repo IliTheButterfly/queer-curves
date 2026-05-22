@@ -16,9 +16,16 @@
 import type { Graph } from '$lib/types.js';
 import { getClient } from '$lib/matrix/client.js';
 
-const MARKER_EVENT = 'app.queercurves.marker';
-const SNAPSHOT_EVENT = 'app.queercurves.snapshot';
-const TOMBSTONE_EVENT = 'app.queercurves.tombstone';
+export const MARKER_EVENT = 'app.queercurves.marker';
+export const SNAPSHOT_EVENT = 'app.queercurves.snapshot';
+export const TOMBSTONE_EVENT = 'app.queercurves.tombstone';
+
+/** Minimal shape of a matrix-js-sdk MatrixEvent that findLatestGraph cares about. */
+export interface SnapshotScanEvent {
+	getType(): string;
+	getContent(): unknown;
+	isDecryptionFailure(): boolean;
+}
 
 function requireClient() {
 	const client = getClient();
@@ -39,18 +46,20 @@ async function sendCustomEvent(
 	await (client.sendEvent as any)(roomId, type, content);
 }
 
-function findLatestGraph(
-	room: ReturnType<ReturnType<typeof getClient> & {} extends { getRoom: infer F } ? F : never>
-): Graph | null {
-	if (!room) return null;
-	const events = room.getLiveTimeline().getEvents();
-	// Walk backwards to find the most recent snapshot before any tombstone.
+/**
+ * Walk a room's timeline backwards and return the most recent snapshot
+ * that decrypted to a valid Graph. A tombstone (newer than any snapshot
+ * we'd consider) suppresses the room entirely — null means "deleted or no
+ * readable snapshot". Decryption failures are skipped silently so the
+ * caller can fall back to whatever earlier snapshot is still decryptable.
+ */
+export function findLatestGraph(events: readonly SnapshotScanEvent[]): Graph | null {
 	for (let i = events.length - 1; i >= 0; i--) {
 		const ev = events[i];
 		const type = ev.getType();
 		if (type === TOMBSTONE_EVENT) return null;
 		if (type === SNAPSHOT_EVENT && !ev.isDecryptionFailure()) {
-			const content = ev.getContent() as Partial<Graph>;
+			const content = ev.getContent() as Partial<Graph> | null;
 			if (content && typeof content === 'object' && content.id) {
 				return content as Graph;
 			}
@@ -65,7 +74,7 @@ export async function listMatrixGraphs(): Promise<Graph[]> {
 	for (const room of client.getRooms()) {
 		const marker = room.currentState.getStateEvents(MARKER_EVENT, '');
 		if (!marker) continue;
-		const graph = findLatestGraph(room);
+		const graph = findLatestGraph(room.getLiveTimeline().getEvents());
 		if (graph) {
 			out.push({ ...graph, id: room.roomId });
 		}
@@ -77,7 +86,7 @@ export async function getMatrixGraph(id: string): Promise<Graph | undefined> {
 	const client = requireClient();
 	const room = client.getRoom(id);
 	if (!room) return undefined;
-	const graph = findLatestGraph(room);
+	const graph = findLatestGraph(room.getLiveTimeline().getEvents());
 	if (!graph) return undefined;
 	return { ...graph, id: room.roomId };
 }
