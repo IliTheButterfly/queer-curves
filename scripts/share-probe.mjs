@@ -133,9 +133,9 @@ try {
 	// be able to edit.
 	const bobText = (await b.page.locator('main').textContent()) ?? '';
 	const aliceText = (await a.page.locator('main').textContent()) ?? '';
-	log("bob sees read-only banner:", /Shared with you/.test(bobText));
-	log("bob does NOT see Add datapoint form:", !/Add datapoint/.test(bobText));
-	log("alice still sees edit controls:", /Add datapoint/.test(aliceText));
+	log('bob sees read-only banner:', /Shared with you/.test(bobText));
+	log('bob does NOT see Add datapoint form:', !/Add datapoint/.test(bobText));
+	log('alice still sees edit controls:', /Add datapoint/.test(aliceText));
 } finally {
 	await browser.close();
 }
