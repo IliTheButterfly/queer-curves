@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { fixtures, type Graph } from '$lib';
 	import { palettes } from '$lib/presets/palettes.js';
-	import { listUserGraphs } from '$lib/store/graphs.js';
+	import { listUserGraphs, migrateLocalStorageToMatrix } from '$lib/store/graphs.js';
 	import { importGraphFromFile } from '$lib/store/io.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
@@ -11,6 +11,36 @@
 	let userGraphs = $state<Graph[]>([]);
 	let importInput: HTMLInputElement;
 	let importError = $state<string | null>(null);
+	let migrating = $state(false);
+	let migrateError = $state<string | null>(null);
+
+	// Graphs that still have `g_…` ids — they were created before the user
+	// signed in or while crypto wasn't set up. We surface a one-click
+	// migration when the session is now encrypted-ready.
+	const localOnly = $derived(userGraphs.filter((g) => !g.id.startsWith('!')));
+	const canMigrate = $derived(
+		matrixStore.hydrated &&
+			matrixStore.session !== null &&
+			matrixStore.cryptoStatus?.ready === true &&
+			localOnly.length > 0
+	);
+
+	async function handleMigrate() {
+		if (migrating) return;
+		migrateError = null;
+		migrating = true;
+		try {
+			const result = await migrateLocalStorageToMatrix();
+			userGraphs = await listUserGraphs();
+			if (result.failed > 0) {
+				migrateError = `Moved ${result.migrated}; ${result.failed} failed and stayed in localStorage — try again.`;
+			}
+		} catch (e) {
+			migrateError = e instanceof Error ? e.message : String(e);
+		} finally {
+			migrating = false;
+		}
+	}
 
 	const featuredPalettes = palettes
 		.filter((p) => ['pride', 'progress', 'trans', 'bi', 'lesbian', 'nb'].includes(p.id))
@@ -90,6 +120,21 @@
 	/>
 	{#if importError}
 		<p class="error">Import failed: {importError}</p>
+	{/if}
+	{#if canMigrate}
+		<aside class="migrate-prompt" role="status">
+			<span>
+				{localOnly.length}
+				{localOnly.length === 1 ? 'graph is' : 'graphs are'} still stored unencrypted in this browser.
+				Move {localOnly.length === 1 ? 'it' : 'them'} into your encrypted Matrix account?
+			</span>
+			<button type="button" class="cta" onclick={handleMigrate} disabled={migrating}>
+				{migrating ? 'Moving…' : 'Move to encrypted storage'}
+			</button>
+		</aside>
+		{#if migrateError}
+			<p class="error">{migrateError}</p>
+		{/if}
 	{/if}
 	{#if userGraphs.length === 0}
 		<p class="muted">
@@ -180,6 +225,24 @@
 	.cta-group {
 		display: inline-flex;
 		gap: var(--space-2);
+	}
+	.migrate-prompt {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		padding: var(--space-2) var(--space-3);
+		margin: var(--space-3) 0;
+		background: rgba(201, 138, 255, 0.08);
+		border: 1px solid rgba(201, 138, 255, 0.2);
+		border-radius: 4px;
+		font-size: 0.9em;
+	}
+	.migrate-prompt span {
+		flex: 1;
+		color: var(--color-fg);
+	}
+	.migrate-prompt button {
+		white-space: nowrap;
 	}
 	.error {
 		padding: var(--space-2) var(--space-3);
