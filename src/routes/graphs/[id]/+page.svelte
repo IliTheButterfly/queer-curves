@@ -11,7 +11,7 @@
 	import NetworkEdgeForm from '$lib/ui/NetworkEdgeForm.svelte';
 	import NetworkEdgeList from '$lib/ui/NetworkEdgeList.svelte';
 	import ShareSection from '$lib/ui/ShareSection.svelte';
-	import { deleteUserGraph, getUserGraph, saveUserGraph } from '$lib/store/graphs.js';
+	import { deleteUserGraph, getUserGraph, isOwnGraph, saveUserGraph } from '$lib/store/graphs.js';
 	import { downloadGraphAsJson } from '$lib/store/io.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 	import type {
@@ -36,6 +36,13 @@
 	let loaded = $state<Graph | null>(data.graph);
 	const graph = $derived(loaded);
 	const isUserGraph = $derived(data.isUserGraph);
+	// Editable when it's a fixture-less user graph AND we're the owner.
+	// For Matrix-backed graphs, ownership is the room creator; an invitee
+	// who joined sees the data read-only so they can't accidentally
+	// overwrite the inviter's history.
+	const isEditable = $derived(
+		isUserGraph && graph !== null && (matrixStore.roomsEpoch, isOwnGraph(graph.id))
+	);
 
 	$effect(() => {
 		// Adopt whatever the loader produced (e.g. when the route param changes
@@ -218,12 +225,17 @@
 				<button type="button" class="ghost-link" onclick={() => downloadGraphAsJson(graph)}>
 					Export
 				</button>
-				{#if isUserGraph}
+				{#if isEditable}
 					<a class="ghost-link" href="/graphs/{graph.id}/edit">Edit</a>
 					<button type="button" class="danger-ghost" onclick={handleDelete}>Delete</button>
 				{/if}
 			</div>
 		</div>
+		{#if isUserGraph && !isEditable}
+			<p class="read-only-tag">
+				Shared with you — read-only. Only the original creator can change this graph.
+			</p>
+		{/if}
 		{#if graph.description}
 			<p class="muted">{graph.description}</p>
 		{/if}
@@ -264,7 +276,7 @@
 
 		<GraphStats {graph} />
 
-		{#if isUserGraph}
+		{#if isEditable}
 			<section class="editors">
 				{#if graph.type === 'spectrum'}
 					<SpectrumDatapointForm {graph} view={activeView} onsubmit={handleAddDatapoint} />
@@ -320,6 +332,15 @@
 		border-radius: 999px;
 		font-size: 0.75em;
 		color: var(--color-muted);
+	}
+	.read-only-tag {
+		margin: var(--space-2) 0 0;
+		padding: var(--space-2) var(--space-3);
+		background: rgba(120, 200, 255, 0.08);
+		border: 1px solid rgba(120, 200, 255, 0.2);
+		border-radius: 4px;
+		color: var(--color-muted);
+		font-size: 0.9em;
 	}
 	.view-selector {
 		margin-top: var(--space-3);

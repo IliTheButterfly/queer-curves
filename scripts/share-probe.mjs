@@ -127,6 +127,15 @@ try {
 		}
 	}
 	log("bob's final datapoint count from alice's graph:", bDp);
+
+	// Read-only check: bob (the invitee) should see "Shared with you" and
+	// NOT see the add-datapoint form / Delete button. Alice should still
+	// be able to edit.
+	const bobText = (await b.page.locator('main').textContent()) ?? '';
+	const aliceText = (await a.page.locator('main').textContent()) ?? '';
+	log('bob sees read-only banner:', /Shared with you/.test(bobText));
+	log('bob does NOT see Add datapoint form:', !/Add datapoint/.test(bobText));
+	log('alice still sees edit controls:', /Add datapoint/.test(aliceText));
 } finally {
 	await browser.close();
 }
