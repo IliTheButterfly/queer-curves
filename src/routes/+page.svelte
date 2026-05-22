@@ -2,17 +2,27 @@
 	import { goto } from '$app/navigation';
 	import { fixtures, type Graph } from '$lib';
 	import { palettes } from '$lib/presets/palettes.js';
-	import { listUserGraphs, migrateLocalStorageToMatrix } from '$lib/store/graphs.js';
+	import {
+		acceptInvite,
+		declineInvite,
+		listPendingInvites,
+		listUserGraphs,
+		migrateLocalStorageToMatrix,
+		type PendingInvite
+	} from '$lib/store/graphs.js';
 	import { importGraphFromFile } from '$lib/store/io.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
 
 	const fixtureGraphs: Graph[] = fixtures.allFixtures;
 	let userGraphs = $state<Graph[]>([]);
+	let invites = $state<PendingInvite[]>([]);
 	let importInput: HTMLInputElement;
 	let importError = $state<string | null>(null);
 	let migrating = $state(false);
 	let migrateError = $state<string | null>(null);
+	let inviteWorking = $state<string | null>(null);
+	let inviteError = $state<string | null>(null);
 
 	// Graphs that still have `g_…` ids — they were created before the user
 	// signed in or while crypto wasn't set up. We surface a one-click
@@ -64,8 +74,43 @@
 				console.warn('listUserGraphs failed', e);
 				userGraphs = [];
 			}
+			try {
+				invites = await listPendingInvites();
+			} catch (e) {
+				console.warn('listPendingInvites failed', e);
+				invites = [];
+			}
 		})();
 	});
+
+	async function handleAcceptInvite(roomId: string) {
+		if (inviteWorking) return;
+		inviteError = null;
+		inviteWorking = roomId;
+		try {
+			await acceptInvite(roomId);
+			invites = await listPendingInvites();
+			userGraphs = await listUserGraphs();
+		} catch (e) {
+			inviteError = e instanceof Error ? e.message : String(e);
+		} finally {
+			inviteWorking = null;
+		}
+	}
+
+	async function handleDeclineInvite(roomId: string) {
+		if (inviteWorking) return;
+		inviteError = null;
+		inviteWorking = roomId;
+		try {
+			await declineInvite(roomId);
+			invites = await listPendingInvites();
+		} catch (e) {
+			inviteError = e instanceof Error ? e.message : String(e);
+		} finally {
+			inviteWorking = null;
+		}
+	}
 
 	async function handleImport() {
 		importError = null;
@@ -101,6 +146,49 @@
 		<code>data_model.md</code>, <code>sharing_model.md</code>,
 		<code>THREATS.md</code>, <code>STACK.md</code>.
 	</p>
+
+	{#if invites.length > 0}
+		<section class="invites">
+			<h2>Pending invites</h2>
+			<p class="muted">
+				Graphs other accounts have invited you to. Accepting joins the room and pulls in any
+				encrypted history they've already shared.
+			</p>
+			<ul class="invite-list">
+				{#each invites as inv (inv.roomId)}
+					<li>
+						<div>
+							<strong>{inv.roomName ?? inv.roomId}</strong>
+							{#if inv.invitedBy}
+								<span class="muted">— from {inv.invitedBy}</span>
+							{/if}
+						</div>
+						<div class="invite-actions">
+							<button
+								type="button"
+								class="cta"
+								onclick={() => handleAcceptInvite(inv.roomId)}
+								disabled={inviteWorking === inv.roomId}
+							>
+								{inviteWorking === inv.roomId ? 'Joining…' : 'Accept'}
+							</button>
+							<button
+								type="button"
+								class="cta secondary"
+								onclick={() => handleDeclineInvite(inv.roomId)}
+								disabled={inviteWorking === inv.roomId}
+							>
+								Decline
+							</button>
+						</div>
+					</li>
+				{/each}
+			</ul>
+			{#if inviteError}
+				<p class="error">{inviteError}</p>
+			{/if}
+		</section>
+	{/if}
 
 	<h2>
 		Your graphs
@@ -223,6 +311,39 @@
 		border-color: var(--color-accent);
 	}
 	.cta-group {
+		display: inline-flex;
+		gap: var(--space-2);
+	}
+	.invites {
+		margin-top: var(--space-3);
+		padding: var(--space-3) var(--space-4);
+		background: rgba(120, 200, 255, 0.06);
+		border: 1px solid rgba(120, 200, 255, 0.2);
+		border-radius: 6px;
+	}
+	.invites h2 {
+		display: block;
+		margin: 0 0 var(--space-1);
+		font-size: 1.05rem;
+	}
+	.invite-list {
+		list-style: none;
+		padding: 0;
+		margin: var(--space-2) 0 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+	.invite-list li {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-2) var(--space-3);
+		background: rgba(255, 255, 255, 0.03);
+		border-radius: 4px;
+	}
+	.invite-actions {
 		display: inline-flex;
 		gap: var(--space-2);
 	}

@@ -10,6 +10,7 @@
 	import NetworkNodeList from '$lib/ui/NetworkNodeList.svelte';
 	import NetworkEdgeForm from '$lib/ui/NetworkEdgeForm.svelte';
 	import NetworkEdgeList from '$lib/ui/NetworkEdgeList.svelte';
+	import ShareSection from '$lib/ui/ShareSection.svelte';
 	import { deleteUserGraph, getUserGraph, saveUserGraph } from '$lib/store/graphs.js';
 	import { downloadGraphAsJson } from '$lib/store/io.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
@@ -282,6 +283,7 @@
 					<NetworkEdgeList {graph} onremove={handleRemoveEdge} onedit={handleEditEdge} />
 				{/if}
 			</section>
+			<ShareSection graphId={graph.id} />
 		{/if}
 	</main>
 {/if}

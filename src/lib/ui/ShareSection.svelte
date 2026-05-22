@@ -1,0 +1,218 @@
+<script lang="ts">
+	import { inviteToUserGraph, listUserGraphMembers, type GraphMember } from '$lib/store/graphs.js';
+	import { matrixStore } from '$lib/matrix/store.svelte.js';
+
+	let { graphId }: { graphId: string } = $props();
+
+	let members = $state<GraphMember[]>([]);
+	let invitee = $state('');
+	let submitting = $state(false);
+	let inviteError = $state<string | null>(null);
+	let inviteSuccess = $state<string | null>(null);
+
+	// Only Matrix-backed graphs can be shared — the dispatcher will throw
+	// for localStorage ids. Surface that as a disabled state so the user
+	// understands why the form is greyed out instead of just bouncing
+	// errors at them on submit.
+	const isShareable = $derived(
+		graphId.startsWith('!') &&
+			matrixStore.session !== null &&
+			matrixStore.cryptoStatus?.ready === true
+	);
+
+	// Re-fetch the member list whenever sync changes (rooms-epoch covers
+	// state events too) so newly-joined invitees appear without a reload.
+	$effect(() => {
+		void matrixStore.roomsEpoch;
+		if (!isShareable) return;
+		(async () => {
+			try {
+				members = await listUserGraphMembers(graphId);
+			} catch (e) {
+				console.warn('listUserGraphMembers failed', e);
+			}
+		})();
+	});
+
+	async function handleInvite(e: SubmitEvent) {
+		e.preventDefault();
+		if (submitting) return;
+		inviteError = null;
+		inviteSuccess = null;
+		submitting = true;
+		try {
+			await inviteToUserGraph(graphId, invitee);
+			inviteSuccess = `Invited ${invitee.trim()} — they'll see this graph after they accept.`;
+			invitee = '';
+			members = await listUserGraphMembers(graphId);
+		} catch (e) {
+			inviteError = e instanceof Error ? e.message : String(e);
+		} finally {
+			submitting = false;
+		}
+	}
+
+	function labelFor(membership: string): string {
+		switch (membership) {
+			case 'join':
+				return 'member';
+			case 'invite':
+				return 'pending';
+			case 'leave':
+				return 'left';
+			case 'ban':
+				return 'banned';
+			default:
+				return membership;
+		}
+	}
+</script>
+
+<section class="share">
+	<h3>Share this graph</h3>
+	{#if !isShareable}
+		<p class="muted">
+			This graph is stored locally on this device. Move it to encrypted storage from the home page
+			before inviting anyone.
+		</p>
+	{:else}
+		<form onsubmit={handleInvite}>
+			<label class="field">
+				<span class="label">Matrix user id</span>
+				<input
+					type="text"
+					bind:value={invitee}
+					placeholder="@bob:example.org"
+					autocomplete="off"
+					spellcheck="false"
+					disabled={submitting}
+				/>
+			</label>
+			{#if inviteError}
+				<p class="error" role="alert">{inviteError}</p>
+			{/if}
+			{#if inviteSuccess}
+				<p class="success" role="status">{inviteSuccess}</p>
+			{/if}
+			<div class="actions">
+				<button type="submit" class="primary" disabled={submitting || !invitee.trim()}>
+					{submitting ? 'Inviting…' : 'Invite'}
+				</button>
+			</div>
+		</form>
+
+		{#if members.length > 0}
+			<ul class="member-list">
+				{#each members as m (m.userId)}
+					<li>
+						<span class="user-id">{m.userId}</span>
+						<span class="role">{labelFor(m.membership)}</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	{/if}
+</section>
+
+<style>
+	.share {
+		margin-top: var(--space-4);
+		padding: var(--space-3) var(--space-4);
+		background: rgba(255, 255, 255, 0.02);
+		border: 1px solid rgba(255, 255, 255, 0.06);
+		border-radius: 6px;
+	}
+	h3 {
+		margin: 0 0 var(--space-2);
+		color: var(--color-accent);
+		font-size: 1.05rem;
+	}
+	.muted {
+		color: var(--color-muted);
+	}
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		margin-bottom: var(--space-2);
+	}
+	.label {
+		font-size: 0.85em;
+		color: var(--color-muted);
+	}
+	input {
+		background: rgba(0, 0, 0, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-fg);
+		padding: var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+		font-family: var(--font-mono);
+	}
+	input:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+	.error {
+		padding: var(--space-2) var(--space-3);
+		background: rgba(255, 100, 100, 0.1);
+		border: 1px solid rgba(255, 100, 100, 0.3);
+		color: rgba(255, 180, 180, 1);
+		border-radius: 4px;
+		font-size: 0.9em;
+	}
+	.success {
+		padding: var(--space-2) var(--space-3);
+		background: rgba(120, 200, 140, 0.08);
+		border: 1px solid rgba(120, 200, 140, 0.25);
+		color: rgba(180, 230, 200, 1);
+		border-radius: 4px;
+		font-size: 0.9em;
+	}
+	.actions {
+		display: flex;
+		justify-content: flex-end;
+	}
+	button.primary {
+		background: var(--color-accent);
+		color: #1a0a2a;
+		border: none;
+		padding: var(--space-2) var(--space-4);
+		border-radius: 4px;
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	button.primary:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	button.primary:not(:disabled):hover {
+		filter: brightness(1.1);
+	}
+	.member-list {
+		list-style: none;
+		padding: 0;
+		margin: var(--space-3) 0 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+	}
+	.member-list li {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: var(--space-1) var(--space-2);
+		background: rgba(255, 255, 255, 0.02);
+		border-radius: 4px;
+		font-size: 0.9em;
+	}
+	.user-id {
+		font-family: var(--font-mono);
+		color: var(--color-fg);
+	}
+	.role {
+		color: var(--color-muted);
+		font-size: 0.85em;
+	}
+</style>
