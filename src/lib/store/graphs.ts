@@ -55,21 +55,38 @@ async function ensureHydrated(): Promise<void> {
 	});
 }
 
+/**
+ * Matrix-backed graphs have room-id keys starting with `!`. Anything else
+ * (the `g_…` ids from generateGraphId) lives in localStorage. Dispatch
+ * per-graph instead of per-session so users who created graphs before
+ * logging in still see them after, and so a single saveUserGraph call
+ * can migrate a stranded localStorage graph to Matrix without the call
+ * site having to know about it.
+ */
+function isMatrixId(id: string): boolean {
+	return id.startsWith('!');
+}
+
 export async function listUserGraphs(): Promise<Graph[]> {
 	await ensureHydrated();
-	if (shouldUseMatrix()) {
-		try {
-			return await listMatrixGraphs();
-		} catch (e) {
-			console.warn('Matrix listUserGraphs failed; falling back to localStorage', e);
-		}
+	const local = readAll();
+	if (!shouldUseMatrix()) return local;
+	try {
+		const matrix = await listMatrixGraphs();
+		// Show the Matrix list first; append any local graphs that haven't
+		// been migrated yet. (Local entries with a Matrix-style id are
+		// stale duplicates of the server-side state — ignore them.)
+		const localOnly = local.filter((g) => !isMatrixId(g.id));
+		return [...matrix, ...localOnly];
+	} catch (e) {
+		console.warn('Matrix listUserGraphs failed; falling back to localStorage', e);
+		return local;
 	}
-	return readAll();
 }
 
 export async function getUserGraph(id: string): Promise<Graph | undefined> {
 	await ensureHydrated();
-	if (shouldUseMatrix()) {
+	if (isMatrixId(id) && shouldUseMatrix()) {
 		try {
 			const g = await getMatrixGraph(id);
 			if (g) return g;
@@ -82,10 +99,21 @@ export async function getUserGraph(id: string): Promise<Graph | undefined> {
 
 export async function saveUserGraph(graph: Graph): Promise<Graph> {
 	await ensureHydrated();
-	if (shouldUseMatrix()) {
+	if (shouldUseMatrix() && !isMatrixId(graph.id)) {
+		// Migrate a stranded localStorage graph into Matrix on the next
+		// save. The save itself creates a new room with the data, and we
+		// drop the local copy so the landing page doesn't show both.
 		const saved = await saveMatrixGraph(graph);
+		const local = readAll();
+		const next = local.filter((g) => g.id !== graph.id);
+		if (next.length !== local.length) writeAll(next);
 		return saved;
 	}
+	if (isMatrixId(graph.id) && shouldUseMatrix()) {
+		return await saveMatrixGraph(graph);
+	}
+	// Logged-out path, or a localStorage-id graph while logged in but
+	// crypto isn't ready: write through to localStorage.
 	const graphs = readAll();
 	const idx = graphs.findIndex((g) => g.id === graph.id);
 	if (idx >= 0) graphs[idx] = graph;
@@ -96,11 +124,43 @@ export async function saveUserGraph(graph: Graph): Promise<Graph> {
 
 export async function deleteUserGraph(id: string): Promise<void> {
 	await ensureHydrated();
-	if (shouldUseMatrix()) {
+	if (isMatrixId(id) && shouldUseMatrix()) {
 		await deleteMatrixGraph(id);
 		return;
 	}
 	writeAll(readAll().filter((g) => g.id !== id));
+}
+
+/**
+ * Move every localStorage graph into encrypted Matrix storage. Best-effort:
+ * any graph that fails to migrate stays in localStorage so the user can
+ * retry. Returns a summary the caller can display.
+ */
+export async function migrateLocalStorageToMatrix(): Promise<{
+	migrated: number;
+	failed: number;
+}> {
+	await ensureHydrated();
+	if (!shouldUseMatrix()) {
+		return { migrated: 0, failed: 0 };
+	}
+	const local = readAll().filter((g) => !isMatrixId(g.id));
+	const migratedIds = new Set<string>();
+	let failed = 0;
+	for (const graph of local) {
+		try {
+			await saveMatrixGraph(graph);
+			migratedIds.add(graph.id);
+		} catch (e) {
+			console.warn('migrate failed for', graph.id, e);
+			failed++;
+		}
+	}
+	// Keep what we couldn't move; drop what we did move.
+	if (migratedIds.size > 0) {
+		writeAll(readAll().filter((g) => !migratedIds.has(g.id)));
+	}
+	return { migrated: migratedIds.size, failed };
 }
 
 export function generateGraphId(): string {
