@@ -298,6 +298,133 @@ export interface CryptoSetupResult {
 	encodedRecoveryKey: string;
 }
 
+export interface KeyRestoreNeeded {
+	/** True if the server has a key backup we haven't downloaded yet. */
+	hasBackup: boolean;
+	/** True if cross-signing exists on the server but isn't trusted locally. */
+	hasCrossSigning: boolean;
+	/**
+	 * True if either of the above is the case AND we don't already have a
+	 * cached backup decryption key — i.e. the user needs to enter their
+	 * recovery key for this device to read existing rooms.
+	 */
+	needsRestore: boolean;
+}
+
+/**
+ * Detect whether this freshly-logged-in device is missing the keys it
+ * needs to read encrypted history. The signal we use:
+ *  - server has a key backup, AND
+ *  - we have no active backup decryption key locally (so all room keys are
+ *    fetched ad-hoc, which can't recover history sent before this device
+ *    existed).
+ *
+ * Returns false-y in three cases: not logged in, no backup on the server,
+ * or we already have the backup decryption key cached locally.
+ */
+export async function checkKeyRestoreNeeded(): Promise<KeyRestoreNeeded> {
+	const out: KeyRestoreNeeded = { hasBackup: false, hasCrossSigning: false, needsRestore: false };
+	if (!_client) return out;
+	const crypto = _client.getCrypto();
+	if (!crypto) return out;
+	try {
+		out.hasCrossSigning = await crypto.userHasCrossSigningKeys();
+	} catch {
+		// network hiccup — assume nothing to restore
+	}
+	try {
+		const backup = await crypto.checkKeyBackupAndEnable();
+		out.hasBackup = backup !== null;
+	} catch {
+		// same
+	}
+	if (!out.hasBackup) return out;
+	try {
+		const cachedVersion = await crypto.getActiveSessionBackupVersion();
+		out.needsRestore = cachedVersion === null;
+	} catch {
+		out.needsRestore = true;
+	}
+	return out;
+}
+
+export interface KeyRestoreResult {
+	/** How many megolm session keys came back from the backup. */
+	importedTotal: number;
+	/** Of those, how many were new to this device. */
+	importedNew: number;
+}
+
+/**
+ * Restore a device's read access to existing encrypted history by feeding
+ * it the user's recovery key.
+ *
+ * The user-visible flow is "log in on a new device, paste your recovery
+ * key, your old graphs unlock." Under the hood we:
+ *   1. decode the printed key back to raw bytes
+ *   2. stash them in the in-memory cache so the SDK's
+ *      `getSecretStorageKey` callback can hand them over on demand
+ *   3. trust this device against the existing cross-signing setup so we
+ *      can read secrets the server signs for this user
+ *   4. pull the backup decryption key out of secret storage
+ *   5. download every megolm session from the server-side key backup
+ */
+export async function restoreFromRecoveryKey(encodedKey: string): Promise<KeyRestoreResult> {
+	if (!_client) throw new Error('Not logged in');
+	const crypto = _client.getCrypto();
+	if (!crypto) throw new Error('Crypto not initialised on this client');
+	const trimmed = encodedKey.trim();
+	if (!trimmed) throw new Error('Recovery key is empty');
+
+	const sdk = await loadSdk();
+	let bytes: Uint8Array;
+	try {
+		// `decodeRecoveryKey` lives under the `Crypto` namespace re-export of
+		// matrix-js-sdk's crypto-api module (it isn't a top-level export of
+		// the main entrypoint).
+		bytes = sdk.Crypto.decodeRecoveryKey(trimmed);
+	} catch (e) {
+		throw new Error(
+			`That doesn't look like a valid recovery key (${e instanceof Error ? e.message : 'unknown error'})`,
+			{ cause: e }
+		);
+	}
+
+	_pendingSecretStorageKey = bytes;
+	try {
+		// Trust this device using the cross-signing keys in secret storage,
+		// rather than generating new ones. Without this the device can read
+		// its own keybackup but other devices won't trust it.
+		try {
+			await crypto.bootstrapCrossSigning({ setupNewCrossSigning: false });
+		} catch (e) {
+			// Not always fatal — backup restore can still succeed even if
+			// cross-signing self-trust fails for some reason (e.g. UIA
+			// required by the homeserver). Log and continue.
+			console.warn('[qc.matrix] bootstrapCrossSigning during restore failed', e);
+		}
+
+		// Pull the backup decryption key out of secret storage and stash it
+		// in the local store so any future Unable-To-Decrypt errors trigger
+		// an auto-retry.
+		await crypto.loadSessionBackupPrivateKeyFromSecretStorage();
+
+		// Download every megolm session the server has. Without this the
+		// session store stays empty and existing snapshots remain
+		// undecryptable until someone happens to share keys with us.
+		const result = await crypto.restoreKeyBackup();
+		// Bump the rooms epoch so any open list/detail view re-fetches now
+		// that previously-undecryptable snapshots can be read.
+		matrixStore.roomsEpoch++;
+		return {
+			importedTotal: result.total,
+			importedNew: result.imported
+		};
+	} finally {
+		_pendingSecretStorageKey = null;
+	}
+}
+
 /**
  * Run the full first-time crypto setup: cross-signing upload (with UIA),
  * a fresh recovery key, secret storage tied to that key, and a new key
