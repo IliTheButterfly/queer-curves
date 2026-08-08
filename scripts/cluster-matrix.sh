@@ -19,7 +19,7 @@
 #   scripts/cluster-matrix.sh deactivate ...   deactivate accounts (--all, or names)
 #   scripts/cluster-matrix.sh logs             tail Synapse logs
 #   scripts/cluster-matrix.sh down             scale to zero, keep the volume
-#   scripts/cluster-matrix.sh reset            wipe all Synapse state (confirms)
+#   scripts/cluster-matrix.sh reset            wipe all Synapse state (confirms; --yes skips)
 #
 # Environment:
 #   KUBE_CONTEXT    kubectl context to use (default: current)
@@ -241,11 +241,15 @@ cmd_bridge_stop() {
 }
 
 cmd_reset() {
-	printf "Wipe ALL cluster Synapse state (database, signing key, media) in %s/%s? [y/N] " "$NAMESPACE" "$PVC"
-	read -r ans
-	if [ "$ans" != 'y' ] && [ "$ans" != 'Y' ]; then
-		echo "Aborted."
-		return
+	# --yes for the same reason `deactivate` has it: piping `y` into a read prompt
+	# to get work done is a habit that eventually pipes `y` into the wrong prompt.
+	if [ "${1:-}" != "--yes" ]; then
+		printf "Wipe ALL cluster Synapse state (database, signing key, media) in %s/%s? [y/N] " "$NAMESPACE" "$PVC"
+		read -r ans
+		if [ "$ans" != 'y' ] && [ "$ans" != 'Y' ]; then
+			echo "Aborted."
+			return
+		fi
 	fi
 	# Scale down first: deleting a bound PVC out from under a running pod leaves
 	# the claim Terminating until the pod goes anyway.
@@ -256,7 +260,14 @@ cmd_reset() {
 	echo
 	echo "Wiped. Run '$0 up' to recreate the volume and bootstrap a fresh server."
 	echo "Every user id and access token from the old instance is now invalid:"
-	echo "the signing key is gone, so re-create your test users."
+	echo "the signing key is gone, so re-create your test users. Every localpart is"
+	echo "free again, including any you had deactivated."
+	echo
+	echo "Your browser still holds a session for the old server. The app will try to"
+	echo "resume it and fail in confusing ways, so clear site data for the app's"
+	echo "origin (DevTools > Application > Storage > Clear site data) before logging"
+	echo "in again — its IndexedDB crypto store belongs to a homeserver that no"
+	echo "longer exists."
 }
 
 case "${1:-status}" in
@@ -270,7 +281,7 @@ case "${1:-status}" in
 	bridge) shift; cmd_bridge "$@" ;;
 	bridge-install) cmd_bridge_install ;;
 	bridge-stop) cmd_bridge_stop ;;
-	reset) cmd_reset ;;
+	reset) shift; cmd_reset "$@" ;;
 	-h|--help|help) sed -n '2,25p' "$0" | sed 's|^# \{0,1\}||' ;;
 	*)
 		echo "usage: $0 {up|down|status|logs|user <name>|users|deactivate ...|bridge|bridge-install|bridge-stop|reset}" >&2

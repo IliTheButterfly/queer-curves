@@ -225,6 +225,16 @@ with "User ID already taken".
 If what you actually want is a clean instance where the familiar names work
 again, `cluster-matrix.sh reset` is the tool: it destroys the database and the
 signing key, so the names come back — along with everything else going away.
+That is usually the right instinct for a test homeserver, and deactivating a pile
+of accounts one at a time is the wrong way to reach for it: it burns the names on
+the way past and leaves the rooms behind as orphans.
+
+**After any `reset`, clear the app's site data before logging in again.** The
+browser keeps its Matrix session — device id, access token and the IndexedDB
+crypto store — for a homeserver that no longer exists, and the app will try to
+resume it and fail in confusing ways rather than showing you a login page.
+DevTools > Application > Storage > Clear site data, for the origin you load the
+app from.
 
 The deactivate endpoint needs an admin account, and this homeserver deliberately
 has none (`user` creates unprivileged ones). So the script creates a timestamped
