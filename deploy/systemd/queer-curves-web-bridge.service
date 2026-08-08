@@ -1,0 +1,39 @@
+# The self-healing bridge to the cluster frontend, as a user service.
+#
+# @@REPO_ROOT@@ is substituted for this checkout's path by
+# `scripts/cluster-web.sh bridge-install`, which renders this file into
+# ~/.config/systemd/user/. Do not install it by hand-copying — the placeholder
+# is not valid as-is.
+#
+# This is the sibling of queer-curves-matrix-bridge.service and runs the same
+# script with different arguments. The two are separate units rather than one
+# because they fail independently: the homeserver can be down while the app is
+# served perfectly well, and restarting one bridge should not disturb the other.
+
+[Unit]
+Description=queer-curves: self-healing tunnel to the cluster frontend
+Documentation=file://@@REPO_ROOT@@/deploy/README.md
+Wants=network-online.target
+After=network-online.target
+# In [Unit], not [Service] — see the note in queer-curves-matrix-bridge.service.
+# Under [Service] systemd ignores it with a log line and keeps the default start
+# limit, which parks a struggling bridge in `failed` instead of retrying.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@@REPO_ROOT@@
+# /healthz is served by nginx's own config rather than being a file in the
+# bundle, so the health check stays meaningful when the volume is empty — it
+# reports the tunnel, not the deployment.
+ExecStart=@@REPO_ROOT@@/scripts/cluster-bridge.sh \
+	--service svc/queer-curves-web \
+	--port 5174 \
+	--remote-port 80 \
+	--health-path /healthz \
+	--name web
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

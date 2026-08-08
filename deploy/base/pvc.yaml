@@ -1,0 +1,26 @@
+# Synapse's entire state: the SQLite database, the ed25519 signing key, the
+# generated secrets and the media store.
+#
+# ReadWriteOnce is the correct access mode rather than a limitation to work
+# around — Synapse on SQLite tolerates exactly one writer, so the volume
+# enforcing that is a second line of defence behind `replicas: 1` and
+# `strategy: Recreate`.
+#
+# Sizing: a test homeserver is rows, not blobs. The database stays in the low
+# megabytes; media uploads dominate and this instance is for exercising the
+# queer-curves sharing model, not hosting photographs. 2 Gi leaves room to be
+# wrong by an order of magnitude.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: queer-curves-synapse-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # Local storage, never network storage: SQLite over NFS/CIFS has broken
+  # locking, and broken locking on a single-writer database is silent
+  # corruption rather than an error.
+  storageClassName: local-shared
+  resources:
+    requests:
+      storage: 2Gi

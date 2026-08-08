@@ -88,6 +88,26 @@ Synapse listens at `http://localhost:8008`. Federation is off, registration is o
 
 Requires Docker, or a compatible runtime (`podman compose` and `podman-compose` are auto-detected).
 
+### Running on a cluster
+
+If you have the Kubernetes cluster to hand, `deploy/` runs both halves there — the same Synapse, and the built frontend behind nginx. Useful when you want the homeserver to outlive your laptop, or to test from two machines against one server.
+
+Both are drop-in replacements, not a second environment. The homeserver answers on `http://localhost:8008` and calls itself `localhost`; the frontend answers on `http://localhost:5174`, which is the port the probe scripts already default to for `DEV_URL`. So everything above works against the cluster with no flag and no edit.
+
+```sh
+scripts/cluster-matrix.sh up               # homeserver
+scripts/cluster-web.sh up                  # frontend (builds and ships the bundle)
+scripts/cluster-matrix.sh bridge-install   # self-healing tunnel on :8008
+scripts/cluster-web.sh bridge-install      # self-healing tunnel on :5174
+scripts/cluster-matrix.sh user alice       # @alice:localhost / devpass
+```
+
+Ship a frontend change with `scripts/cluster-web.sh deploy`; `--help` on either script lists the rest.
+
+You need both bridges: the app runs in your browser, so it reaches the homeserver from your machine rather than from inside the cluster. Run one of each at a time — the compose Synapse also wants 8008, and `pnpm dev --port 5174` also wants 5174 (the default 5173 is fine alongside).
+
+There is deliberately no route into the cluster from outside. The tunnels are authenticated `kubectl` connections bound to loopback, which is what lets the homeserver keep open registration — and for the frontend it is what makes end-to-end encryption work at all, since browsers only grant a secure context to `http://localhost` without TLS. Operational detail and the reasoning are in [deploy/README.md](deploy/README.md).
+
 ### Project layout
 
 ```

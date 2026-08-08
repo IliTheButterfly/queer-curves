@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queer-curves-synapse
+  labels:
+    app.kubernetes.io/component: synapse
+spec:
+  # Exactly one, and never more. Synapse on SQLite is single-writer; two
+  # replicas on one database file is corruption rather than contention, and it
+  # does not announce itself.
+  replicas: 1
+  strategy:
+    # Recreate, never RollingUpdate. A rolling update would try to attach the
+    # ReadWriteOnce volume to a second pod before the first released it, which
+    # deadlocks on volume attach — and were it to succeed, it would be the
+    # two-writer corruption above.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: queer-curves
+      app.kubernetes.io/component: synapse
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: queer-curves
+        app.kubernetes.io/component: synapse
+    spec:
+      securityContext:
+        # Non-root with an explicit uid, and fsGroup so the volume is
+        # group-writable on first attach — when the directory is created by the
+        # kubelet rather than by the image. Relying on fsGroup rather than on
+        # the uid the image happens to build in is what makes this work without
+        # a container runtime here to go and inspect that image.
+        runAsNonRoot: true
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Mints the durable identity on first boot and renders the config on
+        # every boot. See the commentary in config.yaml.
+        - name: bootstrap
+          image: matrixdotorg/synapse:v1.122.0
+          command: ['/bin/sh', '/config/bootstrap.sh']
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: '1'
+              memory: 512Mi
+      containers:
+        - name: synapse
+          # Pinned to the same tag as compose.yaml. The local and cluster
+          # homeservers being the same build is the point — a test that passes
+          # against one should mean something about the other.
+          image: matrixdotorg/synapse:v1.122.0
+          # The homeserver module directly, bypassing the image's start.py.
+          # start.py exists to chown /data as root and drop privileges; we are
+          # already the right non-root uid with fsGroup handling the volume, so
+          # all it would add here is a config-generation path we deliberately
+          # do not use.
+          command:
+            - python
+            - -m
+            - synapse.app.homeserver
+            - --config-path
+            - /data/homeserver.yaml
+          ports:
+            - name: http
+              containerPort: 8008
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
+          # There is no ResourceQuota in this namespace, so nothing but these
+          # limits stops a runaway process from starving the co-tenant
+          # workloads. An idle Synapse sits around 200 MiB; the ceiling is for
+          # the bursts a probe script's initial sync causes.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          # /health is Synapse's own unauthenticated liveness endpoint and needs
+          # no client credentials. A generous startup budget: first boot runs
+          # every SQLite migration before it will answer.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: queer-curves-synapse-data
+        - name: config
+          configMap:
+            name: queer-curves-synapse-config
+---
+# ClusterIP, not NodePort. Nothing outside the cluster reaches this server: the
+# node port range is the only way in and it is not being spent on an open,
+# unauthenticated-registration homeserver. Access is the bridge in
+# scripts/matrix-bridge.sh, which is an authenticated kubectl connection.
+apiVersion: v1
+kind: Service
+metadata:
+  name: queer-curves-synapse
+  labels:
+    app.kubernetes.io/component: synapse
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: queer-curves
+    app.kubernetes.io/component: synapse
+  ports:
+    - name: http
+      port: 8008
+      targetPort: http
