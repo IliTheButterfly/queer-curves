@@ -32,6 +32,7 @@ cd "$REPO_ROOT"
 NAMESPACE="${KUBE_NAMESPACE:-ili}"
 OVERLAY="deploy/overlays/aether"
 DEPLOYMENT=deployment/queer-curves-synapse
+SERVICE=svc/queer-curves-synapse
 PVC=queer-curves-synapse-data
 SERVICE_UNIT=queer-curves-matrix-bridge.service
 
@@ -83,7 +84,13 @@ cmd_status() {
 	"${KUBECTL[@]}" get "$DEPLOYMENT" -o wide 2>&1 || true
 	echo
 	echo "=== pod ==="
-	"${KUBECTL[@]}" get pods -l app.kubernetes.io/component=synapse -o wide 2>&1 || true
+	# Both label selectors: this namespace has co-tenants, and `component=`
+	# alone is not ours to claim (`component=web` already collides with
+	# almagest-web). Nothing here acts on the result, but a status command that
+	# shows someone else's pod is how the wrong thing gets restarted later.
+	"${KUBECTL[@]}" get pods \
+		-l app.kubernetes.io/name=queer-curves,app.kubernetes.io/component=synapse \
+		-o wide 2>&1 || true
 	echo
 	echo "=== volume ==="
 	"${KUBECTL[@]}" get "pvc/$PVC" 2>&1 || true
@@ -127,7 +134,14 @@ cmd_user() {
 }
 
 cmd_bridge() {
-	exec "$SCRIPT_DIR/matrix-bridge.sh" "$@"
+	exec "$SCRIPT_DIR/cluster-bridge.sh" \
+		--service "$SERVICE" \
+		--port 8008 \
+		--remote-port 8008 \
+		--health-path /health \
+		--name matrix \
+		--namespace "$NAMESPACE" \
+		"$@"
 }
 
 cmd_bridge_install() {

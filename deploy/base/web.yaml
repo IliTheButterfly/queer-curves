@@ -1,0 +1,243 @@
+# The built frontend, served by nginx from a volume.
+#
+# There is no image build here on purpose. The app is a static bundle from
+# `adapter-static`, and this repo has no CI that publishes container images, so
+# baking one would mean inventing a registry, credentials and a publishing
+# pipeline in order to ship 65 files. Instead the volume is filled by
+# `scripts/cluster-web.sh deploy`, which builds locally and streams the result
+# into the pod. The trade is explicit: the cluster cannot rebuild this by itself,
+# and `deploy` is the only thing that changes what is served. When CI does start
+# publishing images, this becomes a Deployment with an image tag and the volume
+# goes away.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: queer-curves-web-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-shared
+  # The bundle is ~7.5 MiB, 5 MiB of which is the matrix-sdk-crypto WASM blob.
+  # Two release directories are kept (see the A/B swap in cluster-web.sh), so
+  # ~15 MiB is the working set. 1 Gi is absurdly generous and costs nothing.
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: queer-curves-web-config
+data:
+  default.conf: |
+    server {
+      # 8080, not 80: this runs as an unprivileged uid and cannot bind a
+      # privileged port. The Service maps 80 to it.
+      listen 8080;
+      server_name _;
+
+      # The document root is a symlink that `deploy` swaps atomically, so a
+      # release never serves a half-extracted tree. `disable_symlinks off` is
+      # nginx's default, but this depends on it, which is worth saying out loud.
+      root /srv/www/current;
+      index index.html;
+
+      # Readiness has to be answerable before anything has been deployed:
+      # a fresh volume is empty, and a pod that can never become ready could
+      # never be deployed *into*. So this endpoint reports that nginx is up,
+      # and `cluster-web.sh status` separately reports whether a bundle is
+      # actually present. Conflating the two would make an empty volume look
+      # like a crash-looping pod.
+      location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 'ok';
+      }
+
+      # The app is a single-page bundle: `adapter-static` is configured with
+      # `fallback: index.html`, so client-side routes like /graphs/<id> have no
+      # file behind them and must be served the shell.
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
+
+      # index.html must never be cached. It names the hashed bundles, so a
+      # cached copy pins the browser to a bundle that a redeploy has already
+      # deleted — the app then dies on a 404 for a chunk, which looks like a
+      # broken deployment rather than a stale page.
+      #
+      # No `expires -1` alongside this: it emits its own Cache-Control: no-cache,
+      # and the response then carries two Cache-Control headers saying different
+      # things.
+      location = /index.html {
+        add_header Cache-Control 'no-store, must-revalidate';
+      }
+
+      # Everything under _app/immutable is content-hashed, so it can be cached
+      # hard and forever.
+      location /_app/immutable/ {
+        add_header Cache-Control 'public, max-age=31536000, immutable';
+        access_log off;
+      }
+
+      # Belt and braces on the WASM MIME type. matrix-sdk-crypto ships a 5 MiB
+      # .wasm sidecar loaded with instantiateStreaming(), which *rejects* a
+      # response that is not application/wasm — and it fails exactly when
+      # end-to-end encryption initialises, so the symptom is "encryption is
+      # broken" rather than "a file has the wrong header". nginx 1.21.1+ has the
+      # mapping in mime.types already; this makes a future base-image change
+      # unable to quietly take E2EE out with it.
+      #
+      # It is deliberately `default_type` in a location and NOT a `types { }`
+      # block. A `types` block here does not add one entry — it REPLACES the
+      # inherited MIME table for this server, so everything else, index.html
+      # included, becomes application/octet-stream and the browser downloads the
+      # app instead of running it. Asked for in this file's first draft; caught
+      # by curling the headers.
+      location ~* \.wasm$ {
+        default_type application/wasm;
+        add_header Cache-Control 'public, max-age=31536000, immutable';
+      }
+
+      gzip on;
+      gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+      # Not the WASM: it is already compact, and gzipping 5 MiB on every request
+      # to save little is a poor trade against instantiateStreaming's appetite.
+      gzip_min_length 1024;
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queer-curves-web
+  labels:
+    app.kubernetes.io/component: web
+spec:
+  # One replica with a ReadWriteOnce volume, and `Recreate` for the same reason
+  # as the homeserver: a rolling update would deadlock trying to attach the
+  # volume to a second pod. It also keeps `deploy` honest — there is exactly one
+  # pod holding the bundle, so a deploy cannot land on some replicas only.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: queer-curves
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: queer-curves
+        app.kubernetes.io/component: web
+    spec:
+      securityContext:
+        # 101 is the uid nginx runs as in the unprivileged image. fsGroup gives
+        # it write access to the volume, which `deploy` needs in order to extract
+        # a release into it.
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # nginx will not start if its root is missing, and a fresh volume has no
+        # `current` symlink at all. This creates an empty release and points
+        # `current` at it, so the pod comes up serving nothing rather than
+        # crash-looping before anyone can deploy into it.
+        - name: prepare-root
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /srv/www/a /srv/www/b
+              if [ ! -L /srv/www/current ]; then
+                ln -sfn /srv/www/a /srv/www/current
+                echo "prepare-root: initialised empty document root"
+              else
+                echo "prepare-root: document root already present ($(readlink /srv/www/current))"
+              fi
+          volumeMounts:
+            - name: data
+              mountPath: /srv/www
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+      containers:
+        - name: nginx
+          # The unprivileged variant, so the pod satisfies `runAsNonRoot`
+          # without patching pid paths and cache directories by hand.
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /srv/www
+            - name: config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
+          # Static file serving. The requests are cheap; the limits exist only
+          # so a co-tenant workload cannot be starved by something pathological.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: queer-curves-web-data
+        - name: config
+          configMap:
+            name: queer-curves-web-config
+---
+# ClusterIP, like the homeserver, and for a sharper reason than symmetry: the app
+# needs a *secure context* for the WebCrypto and IndexedDB work that end-to-end
+# encryption depends on. Browsers grant that to `http://localhost` but not to a
+# bare cluster IP or hostname over plain HTTP. So serving this over a loopback
+# bridge is not merely convenient — without TLS it is the only way the crypto
+# works at all. Exposing it on a node port would produce an app that loads and
+# then fails at encryption.
+apiVersion: v1
+kind: Service
+metadata:
+  name: queer-curves-web
+  labels:
+    app.kubernetes.io/component: web
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: queer-curves
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

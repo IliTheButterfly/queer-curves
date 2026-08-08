@@ -10,6 +10,7 @@ resources:
   - pvc.yaml
   - config.yaml
   - synapse.yaml
+  - web.yaml
 
 labels:
   # includeSelectors is off, and the selectors are written out by hand in

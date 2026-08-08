@@ -1,34 +1,46 @@
 #!/usr/bin/env bash
 #
-# A self-healing tunnel from localhost:8008 to the cluster Synapse.
+# A self-healing tunnel from a local port to a Service in the cluster.
 #
-# The cluster cannot expose this homeserver — registration is open on it, so it
-# gets no node port — and `kubectl port-forward` on its own is not a durable
-# substitute. It dies when the pod restarts, when the API server drops a
-# long-lived SPDY stream, and when a laptop suspends. Worse, it sometimes stays
-# *up* while forwarding nothing: the process is alive, the socket accepts, and
-# every request hangs. A `Restart=always` supervisor cannot see that, because
+# Nothing in this deployment is reachable from outside the cluster — no node
+# port, no ingress, on purpose — and `kubectl port-forward` on its own is not a
+# durable substitute for one. It dies when the pod restarts, when the API server
+# drops a long-lived SPDY stream, and when a laptop suspends. Worse, it sometimes
+# stays *up* while forwarding nothing: the process is alive, the socket accepts,
+# and every request hangs. A `Restart=always` supervisor cannot see that, because
 # nothing exited.
 #
 # So this script supervises the tunnel by what it is for rather than by whether
-# the process lives: it polls Synapse's /health *through* the forward, and tears
-# the forward down when the answers stop, healthy-looking process or not. That
-# is the whole reason this exists instead of a one-line ExecStart.
+# the process lives: it polls a health URL *through* the forward, and tears the
+# forward down when the answers stop, healthy-looking process or not. That is the
+# whole reason this exists instead of a one-line ExecStart.
+#
+# Both bridges — the homeserver and the frontend — run this same script with
+# different arguments. The supervision logic is subtle enough that a second copy
+# of it would drift from this one.
 #
 # Usage:
-#   scripts/matrix-bridge.sh              run in the foreground until interrupted
-#   scripts/matrix-bridge.sh --port 8009  forward to a different local port
+#   scripts/cluster-bridge.sh --service svc/foo --port 8008 --remote-port 8008 \
+#                            [--health-path /health] [--name foo] [--namespace ili]
+#
+# In practice you want scripts/cluster-matrix.sh bridge or
+# scripts/cluster-web.sh bridge, which pass the right arguments for each.
 #
 # Environment:
 #   KUBE_CONTEXT    kubectl context to use (default: current)
-#   KUBE_NAMESPACE  namespace holding the deployment (default: ili)
+#   KUBE_NAMESPACE  namespace holding the Service (default: ili)
 
 set -euo pipefail
 
-LOCAL_PORT=8008
 NAMESPACE="${KUBE_NAMESPACE:-ili}"
-SERVICE=svc/queer-curves-synapse
-REMOTE_PORT=8008
+SERVICE=""
+LOCAL_PORT=""
+REMOTE_PORT=""
+# Defaults to / rather than to something Synapse-specific: a health path that
+# only one of the two services has would fail closed on the other, and a bridge
+# that reports its target as permanently unhealthy is worse than no check.
+HEALTH_PATH="/"
+NAME=""
 
 # How long an unhealthy tunnel is tolerated before being replaced. Three misses
 # at two seconds is ~6s of grace, which rides out a GC pause without sitting on
@@ -53,22 +65,39 @@ BACKOFF_MAX=30
 
 while [ $# -gt 0 ]; do
 	case "$1" in
+		--service) SERVICE="${2:?--service needs a value}"; shift 2 ;;
 		--port) LOCAL_PORT="${2:?--port needs a value}"; shift 2 ;;
+		--remote-port) REMOTE_PORT="${2:?--remote-port needs a value}"; shift 2 ;;
+		--health-path) HEALTH_PATH="${2:?--health-path needs a value}"; shift 2 ;;
+		--name) NAME="${2:?--name needs a value}"; shift 2 ;;
 		--namespace) NAMESPACE="${2:?--namespace needs a value}"; shift 2 ;;
-		-h|--help) sed -n '2,25p' "$0" | sed 's|^# \{0,1\}||'; exit 0 ;;
-		*) echo "matrix-bridge: unknown argument: $1" >&2; exit 2 ;;
+		-h|--help) sed -n '2,30p' "$0" | sed 's|^# \{0,1\}||'; exit 0 ;;
+		*) echo "cluster-bridge: unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
+
+for required in SERVICE LOCAL_PORT REMOTE_PORT; do
+	if [ -z "${!required}" ]; then
+		echo "cluster-bridge: --$(echo "$required" | tr 'A-Z_' 'a-z-') is required" >&2
+		exit 2
+	fi
+done
+
+# Label for the log lines. Derived from the Service name so a journal with both
+# bridges in it can be read at all — "bridge: tunnel up" twice would be useless.
+if [ -z "$NAME" ]; then
+	NAME="${SERVICE##*/}"
+fi
 
 KUBECTL=(kubectl --namespace "$NAMESPACE")
 if [ -n "${KUBE_CONTEXT:-}" ]; then
 	KUBECTL=(kubectl --context "$KUBE_CONTEXT" --namespace "$NAMESPACE")
 fi
 
-HEALTH_URL="http://127.0.0.1:${LOCAL_PORT}/health"
+HEALTH_URL="http://127.0.0.1:${LOCAL_PORT}${HEALTH_PATH}"
 FORWARD_PID=""
 
-log() { printf '%s matrix-bridge: %s\n' "$(date +%H:%M:%S)" "$*"; }
+log() { printf '%s %s-bridge: %s\n' "$(date +%H:%M:%S)" "$NAME" "$*"; }
 
 stop_forward() {
 	if [ -n "$FORWARD_PID" ] && kill -0 "$FORWARD_PID" 2>/dev/null; then
@@ -104,17 +133,19 @@ healthy() {
 port_is_taken() {
 	# A plain TCP connect rather than an HTTP request: whatever holds the port
 	# will make port-forward's bind fail, and it does not have to be something
-	# that answers HTTP for that to be true. Usually it is a second bridge or
-	# the docker-compose Synapse — both fine things to be running, but silently
-	# competing with them for the port is not.
+	# that answers HTTP for that to be true.
 	(exec 3<>"/dev/tcp/127.0.0.1/${LOCAL_PORT}") 2>/dev/null
 }
 
 if port_is_taken; then
+	# Usually the local counterpart of whatever this bridge fronts: the
+	# docker-compose Synapse on 8008, or `pnpm dev` on the frontend port. Both are
+	# fine things to be running. Silently competing with them for the port is not,
+	# and losing the race produces a confusing bind error rather than this.
 	log "something is already answering on port ${LOCAL_PORT}."
-	log "that is either another bridge or the docker-compose Synapse"
-	log "(scripts/dev-matrix.sh down), so this one would fight it for the port."
-	log "use --port to pick another, or stop the other one first."
+	log "that is probably the local equivalent — the compose Synapse"
+	log "(scripts/dev-matrix.sh down) or a dev server — or a second bridge."
+	log "stop it, or pass --port to pick another local port."
 	exit 1
 fi
 
@@ -149,7 +180,7 @@ while true; do
 	done
 
 	if [ "$established" = true ]; then
-		log "tunnel up (pid $FORWARD_PID) — Synapse is at http://localhost:${LOCAL_PORT}"
+		log "tunnel up (pid $FORWARD_PID) — reachable at http://localhost:${LOCAL_PORT}"
 		backoff=$BACKOFF_MIN
 
 		# Watch. Two independent failure modes to catch: the process exiting,

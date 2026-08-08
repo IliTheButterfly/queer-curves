@@ -1,4 +1,4 @@
-# The self-healing bridge as a user service.
+# The self-healing bridge to the cluster homeserver, as a user service.
 #
 # @@REPO_ROOT@@ is substituted for this checkout's path by
 # `scripts/cluster-matrix.sh bridge-install`, which renders this file into
@@ -17,20 +17,29 @@ Documentation=file://@@REPO_ROOT@@/deploy/README.md
 # does and retry, so a hard dependency here would buy nothing.
 Wants=network-online.target
 After=network-online.target
+# Disables the start rate limit, which otherwise parks the unit in `failed`
+# after five restarts in ten seconds — the exact opposite of self-healing, and
+# it would strike precisely when the cluster is having a bad minute.
+#
+# This belongs in [Unit], not [Service]. Put it under [Service] and systemd logs
+# "Unknown key ... ignoring" and silently keeps the default limit, so the setting
+# reads as present while doing nothing at all.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=@@REPO_ROOT@@
-ExecStart=@@REPO_ROOT@@/scripts/matrix-bridge.sh
+ExecStart=@@REPO_ROOT@@/scripts/cluster-bridge.sh \
+	--service svc/queer-curves-synapse \
+	--port 8008 \
+	--remote-port 8008 \
+	--health-path /health \
+	--name matrix
 # Always, and with a floor on the rate. The script's own loop means reaching
 # this is unusual, so a restart here indicates something it could not handle;
 # five seconds keeps that from becoming a spin.
 Restart=always
 RestartSec=5
-# No StartLimit: rate-limiting a bridge into a permanent `failed` state is the
-# opposite of self-healing. A cluster that is down for an hour should find the
-# bridge still trying when it comes back.
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target
