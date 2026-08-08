@@ -15,6 +15,8 @@
 #   scripts/cluster-matrix.sh bridge-install   install + start it as a user service
 #   scripts/cluster-matrix.sh bridge-stop      stop and disable that user service
 #   scripts/cluster-matrix.sh user <name>      create a user (password: devpass)
+#   scripts/cluster-matrix.sh users            list accounts and which are active
+#   scripts/cluster-matrix.sh deactivate ...   deactivate accounts (--all, or names)
 #   scripts/cluster-matrix.sh logs             tail Synapse logs
 #   scripts/cluster-matrix.sh down             scale to zero, keep the volume
 #   scripts/cluster-matrix.sh reset            wipe all Synapse state (confirms)
@@ -133,6 +135,72 @@ cmd_user() {
 		http://localhost:8008
 }
 
+cmd_users() {
+	"${KUBECTL[@]}" exec -i "$DEPLOYMENT" -- python - list < "$SCRIPT_DIR/synapse-admin.py"
+}
+
+cmd_deactivate() {
+	local assume_yes=false
+	local targets=()
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--yes) assume_yes=true; shift ;;
+			*) targets+=("$1"); shift ;;
+		esac
+	done
+
+	if [ ${#targets[@]} -eq 0 ]; then
+		echo "usage: $0 deactivate [--yes] {--all | <username> ...}" >&2
+		exit 1
+	fi
+
+	# Deactivation is irreversible in a way that is easy to under-estimate, so it
+	# is spelled out here rather than only in the docs: Synapse keeps a tombstone
+	# row, and that row is what refuses the localpart to any future registration.
+	echo "Synapse cannot delete a user, only deactivate: profile data is erased,"
+	echo "tokens are invalidated, the account leaves its rooms — and the localpart"
+	echo "is burned. A deactivated @alice:localhost can never be registered again."
+	echo "Only '$0 reset' (which wipes the whole homeserver) frees the names."
+	echo
+	if [ "${targets[0]}" = "--all" ]; then
+		echo "Target: EVERY active account on this homeserver."
+	else
+		echo "Target: ${targets[*]}"
+	fi
+	echo
+	if [ "$assume_yes" != true ]; then
+		printf "Proceed? [y/N] "
+		read -r ans
+		if [ "$ans" != 'y' ] && [ "$ans" != 'Y' ]; then
+			echo "Aborted."
+			return
+		fi
+	fi
+
+	# A throwaway admin, because the deactivate endpoint needs one and this
+	# homeserver deliberately has none — `user` creates unprivileged accounts. It
+	# is created, used, and deactivated in the same run, so no standing admin
+	# credential is left behind. The name is timestamped because its own localpart
+	# is burned on the way out, so the next run cannot reuse it.
+	local admin="zz-cleanup-$(date +%s)"
+	local password
+	password="$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 24)"
+
+	echo "Creating a temporary admin (@${admin}:localhost)..."
+	"${KUBECTL[@]}" exec -i "$DEPLOYMENT" -- \
+		register_new_matrix_user \
+		-u "$admin" \
+		-p "$password" \
+		--admin \
+		-c /data/homeserver.yaml \
+		http://localhost:8008 >/dev/null
+
+	echo
+	"${KUBECTL[@]}" exec -i "$DEPLOYMENT" -- \
+		python - deactivate "$admin" "$password" "${targets[@]}" \
+		< "$SCRIPT_DIR/synapse-admin.py"
+}
+
 cmd_bridge() {
 	exec "$SCRIPT_DIR/cluster-bridge.sh" \
 		--service "$SERVICE" \
@@ -197,13 +265,15 @@ case "${1:-status}" in
 	status) cmd_status ;;
 	logs) cmd_logs ;;
 	user) shift; cmd_user "$@" ;;
+	users) cmd_users ;;
+	deactivate) shift; cmd_deactivate "$@" ;;
 	bridge) shift; cmd_bridge "$@" ;;
 	bridge-install) cmd_bridge_install ;;
 	bridge-stop) cmd_bridge_stop ;;
 	reset) cmd_reset ;;
 	-h|--help|help) sed -n '2,25p' "$0" | sed 's|^# \{0,1\}||' ;;
 	*)
-		echo "usage: $0 {up|down|status|logs|user <name>|bridge|bridge-install|bridge-stop|reset}" >&2
+		echo "usage: $0 {up|down|status|logs|user <name>|users|deactivate ...|bridge|bridge-install|bridge-stop|reset}" >&2
 		exit 1
 		;;
 esac

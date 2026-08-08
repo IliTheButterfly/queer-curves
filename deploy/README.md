@@ -43,6 +43,8 @@ cannot log in.
 | Logs                      | `cluster-matrix.sh logs`           | `cluster-web.sh logs`           |
 | Scale to zero, keep state | `cluster-matrix.sh down`           | `cluster-web.sh down`           |
 | Create a user             | `cluster-matrix.sh user <name>`    | —                               |
+| List accounts             | `cluster-matrix.sh users`          | —                               |
+| Deactivate accounts       | `cluster-matrix.sh deactivate ...` | —                               |
 | Wipe all state            | `cluster-matrix.sh reset`          | —                               |
 
 `KUBE_CONTEXT` and `KUBE_NAMESPACE` override the context and namespace; the
@@ -200,6 +202,37 @@ shell pins the browser to bundles a redeploy has already deleted, and the app th
 dies on a 404 for a chunk, which looks like a broken deployment rather than a
 stale page.
 
+## Users, and why they cannot be deleted
+
+A test homeserver with open registration accumulates accounts fast — every
+`share-probe.mjs` run leaves two behind. `cluster-matrix.sh users` lists them and
+says which are still active; it reads the database directly, so it needs no
+credentials.
+
+`cluster-matrix.sh deactivate --all`, or `deactivate <name> ...`, clears them out.
+Understand what that does before reaching for it, because the word "delete" is not
+available:
+
+**Synapse has no operation that removes a user.** The supported one is
+deactivation, which erases profile data, invalidates every access token and
+removes the account from its rooms — but leaves a tombstone row. That row is not
+an implementation wart to be worked around: it is what refuses the localpart to
+any future registration, so a deactivated account cannot be silently recycled to
+someone else. The practical consequence is that **`@alice:localhost` can never be
+registered again** on that instance, and `cluster-matrix.sh user alice` will fail
+with "User ID already taken".
+
+If what you actually want is a clean instance where the familiar names work
+again, `cluster-matrix.sh reset` is the tool: it destroys the database and the
+signing key, so the names come back — along with everything else going away.
+
+The deactivate endpoint needs an admin account, and this homeserver deliberately
+has none (`user` creates unprivileged ones). So the script creates a timestamped
+throwaway admin, uses it, and deactivates it last — after the others, because
+doing it first would invalidate the token the rest of the run depends on. No
+standing admin credential is left behind, and no admin credential ever crosses
+the bridge: the whole flow runs inside the pod against its own loopback.
+
 ## When it breaks
 
 - **A bridge exits saying something already answers on its port** — that is the
@@ -221,3 +254,5 @@ stale page.
 - **Login fails for a user that used to work, after a `reset`** — expected. The
   reset destroys the signing key, so every user id and token from the old instance
   is invalid. Re-create the users.
+- **"User ID already taken" for a name you deactivated** — also expected, and not
+  recoverable: deactivation burns the localpart. Pick another name, or `reset`.
