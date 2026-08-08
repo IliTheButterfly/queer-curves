@@ -90,6 +90,18 @@ Note that a user service stops when your last session ends unless lingering is
 enabled — `loginctl enable-linger $USER` if you want the bridge up while logged
 out.
 
+**From inside a distrobox or toolbox**, `bridge-install` installs the unit to the
+_host's_ systemd rather than the container's, because a container has no running
+per-user systemd manager — `systemctl --user` there reports the manager offline
+and refuses to enable anything, while the unit file lands in the shared home
+where the host's manager can see it. `cluster-matrix.sh` detects this and routes
+`systemctl` through `distrobox-host-exec`, so `status`, `bridge-install` and
+`bridge-stop` all work from either side. Containers share the host network
+namespace, so a bridge running on the host still puts Synapse on the container's
+`localhost:8008`. The host needs `kubectl` for this, which is where its
+credentials live anyway. The `status` and `bridge-install` output prints the
+right `systemctl`/`journalctl` invocation for wherever you are.
+
 ## Shape of the deployment
 
 ```

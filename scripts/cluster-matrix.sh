@@ -40,6 +40,19 @@ if [ -n "${KUBE_CONTEXT:-}" ]; then
 	KUBECTL=(kubectl --context "$KUBE_CONTEXT" --namespace "$NAMESPACE")
 fi
 
+# Inside a container (distrobox/toolbox) the per-user systemd manager is not
+# running, so `systemctl --user` here reports the manager offline and refuses to
+# enable anything — while the unit file itself lands in the shared home, where
+# the *host's* manager can see it perfectly well. Route systemctl to the host in
+# that case. Containers share the host network namespace, so a bridge started on
+# the host still puts Synapse on this shell's localhost:8008.
+SYSTEMCTL=(systemctl --user)
+JOURNALCTL_HINT="journalctl --user -u $SERVICE_UNIT -f"
+if [ -f /run/.containerenv ] && command -v distrobox-host-exec >/dev/null 2>&1; then
+	SYSTEMCTL=(distrobox-host-exec systemctl --user)
+	JOURNALCTL_HINT="distrobox-host-exec journalctl --user -u $SERVICE_UNIT -f"
+fi
+
 cmd_up() {
 	echo "queer-curves-synapse: applying $OVERLAY to namespace $NAMESPACE..."
 	# No --prune, ever. This namespace holds unrelated production workloads and
@@ -76,9 +89,9 @@ cmd_status() {
 	"${KUBECTL[@]}" get "pvc/$PVC" 2>&1 || true
 	echo
 	echo "=== bridge ==="
-	if systemctl --user is-active --quiet "$SERVICE_UNIT" 2>/dev/null; then
+	if "${SYSTEMCTL[@]}" is-active --quiet "$SERVICE_UNIT" 2>/dev/null; then
 		echo "user service $SERVICE_UNIT: active"
-	elif systemctl --user list-unit-files "$SERVICE_UNIT" >/dev/null 2>&1; then
+	elif [ -f "$HOME/.config/systemd/user/$SERVICE_UNIT" ]; then
 		echo "user service $SERVICE_UNIT: installed, not active"
 	else
 		echo "user service $SERVICE_UNIT: not installed"
@@ -129,11 +142,11 @@ cmd_bridge_install() {
 	# path, and a template with a placeholder that is substituted once is easier
 	# to reason about than a unit that depends on where it was invoked from.
 	sed -e "s|@@REPO_ROOT@@|$REPO_ROOT|g" "$src" > "$unit_dir/$SERVICE_UNIT"
-	systemctl --user daemon-reload
-	systemctl --user enable --now "$SERVICE_UNIT"
+	"${SYSTEMCTL[@]}" daemon-reload
+	"${SYSTEMCTL[@]}" enable --now "$SERVICE_UNIT"
 	echo "Installed and started $SERVICE_UNIT."
-	echo "  status: systemctl --user status $SERVICE_UNIT"
-	echo "  logs:   journalctl --user -u $SERVICE_UNIT -f"
+	echo "  status: ${SYSTEMCTL[*]} status $SERVICE_UNIT"
+	echo "  logs:   $JOURNALCTL_HINT"
 	echo
 	echo "Note: without 'loginctl enable-linger $USER' a user service stops when"
 	echo "your last session ends. Enable lingering if you want the bridge up"
@@ -141,7 +154,7 @@ cmd_bridge_install() {
 }
 
 cmd_bridge_stop() {
-	systemctl --user disable --now "$SERVICE_UNIT" 2>/dev/null || true
+	"${SYSTEMCTL[@]}" disable --now "$SERVICE_UNIT" 2>/dev/null || true
 	echo "Stopped and disabled $SERVICE_UNIT."
 }
 
