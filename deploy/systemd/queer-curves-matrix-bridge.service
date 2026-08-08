@@ -1,0 +1,36 @@
+# The self-healing bridge as a user service.
+#
+# @@REPO_ROOT@@ is substituted for this checkout's path by
+# `scripts/cluster-matrix.sh bridge-install`, which renders this file into
+# ~/.config/systemd/user/. Do not install it by hand-copying — the placeholder
+# is not valid as-is.
+#
+# Note the division of labour: the script itself handles the failure modes that
+# do not kill the process (a tunnel that forwards nothing), because systemd
+# cannot see those. This unit handles the ones the script cannot survive — its
+# own crash, a logout, a reboot.
+
+[Unit]
+Description=queer-curves: self-healing tunnel to the cluster Matrix homeserver
+Documentation=file://@@REPO_ROOT@@/deploy/README.md
+# Best-effort ordering only. The bridge is built to come up before the network
+# does and retry, so a hard dependency here would buy nothing.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@@REPO_ROOT@@
+ExecStart=@@REPO_ROOT@@/scripts/matrix-bridge.sh
+# Always, and with a floor on the rate. The script's own loop means reaching
+# this is unusual, so a restart here indicates something it could not handle;
+# five seconds keeps that from becoming a spin.
+Restart=always
+RestartSec=5
+# No StartLimit: rate-limiting a bridge into a permanent `failed` state is the
+# opposite of self-healing. A cluster that is down for an hour should find the
+# bridge still trying when it comes back.
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=default.target

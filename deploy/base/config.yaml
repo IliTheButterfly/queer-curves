@@ -1,0 +1,177 @@
+# The homeserver configuration, as a template plus a bootstrap script.
+#
+# Why a template and not the config Synapse generates for itself: `synapse
+# generate` writes secrets and configuration into the same file, on the volume,
+# where nothing tracks it. Editing a setting then means exec'ing into a pod.
+# Splitting them means the *configuration* is this ConfigMap — reviewable, and
+# changed by editing a tracked file and restarting — while only the things that
+# must never change (the signing key, the three secrets) live on the volume.
+#
+# The bootstrap script mints those on first boot and renders the template
+# around them on every boot. It is idempotent by construction: a file that
+# exists is never regenerated, so restarts and re-applies keep the same
+# identity, and rendering happens unconditionally so a ConfigMap edit takes
+# effect on the next restart.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: queer-curves-synapse-config
+data:
+  # `server_name` is `localhost` deliberately, and it is the single most
+  # load-bearing choice in this file. It is what makes the cluster instance a
+  # drop-in replacement for the docker-compose one: every probe in scripts/
+  # defaults to HOMESERVER=http://localhost:8008, the login page pre-fills that
+  # URL, and share-probe.mjs constructs `@bob:localhost` literally. The server
+  # name is baked into every user id and room id, so choosing anything else
+  # here would fork the test corpus and silently break those scripts. Clients
+  # reach this server through the bridge on localhost:8008, so the name is also
+  # honest from the client's point of view.
+  #
+  # Federation is off — no federation listener, an empty domain whitelist, and
+  # no trusted key servers. This host is unreachable from outside the cluster
+  # (see deploy/README.md), so federation could not work anyway, and leaving it
+  # nominally enabled would only produce noise in the logs.
+  homeserver.template.yaml: |
+    server_name: "localhost"
+    pid_file: /data/homeserver.pid
+    report_stats: false
+
+    listeners:
+      - port: 8008
+        tls: false
+        type: http
+        x_forwarded: true
+        # 0.0.0.0, not 127.0.0.1: the only thing that can reach this port is
+        # the Service, and the Service talks to the pod IP.
+        bind_addresses: ['0.0.0.0']
+        resources:
+          - names: [client]
+            compress: false
+
+    database:
+      name: sqlite3
+      args:
+        database: /data/homeserver.db
+
+    media_store_path: /data/media_store
+    signing_key_path: /data/signing.key
+    log_config: /config/log.config
+
+    # Federation, decisively off.
+    federation_domain_whitelist: []
+    trusted_key_servers: []
+    suppress_key_server_warning: true
+
+    # --- test-instance overrides -------------------------------------------
+    # This instance exists to be registered against and hammered by the probe
+    # scripts, so registration is open and the rate limits are slack. That is
+    # only defensible because nothing outside the cluster can reach it. If a
+    # route in from the internet is ever added, both of these must be revisited
+    # in the same change — see the warning in deploy/README.md.
+    enable_registration: true
+    enable_registration_without_verification: true
+    rc_message:
+      per_second: 1000
+      burst_count: 1000
+    rc_registration:
+      per_second: 1000
+      burst_count: 1000
+    rc_login:
+      address:
+        per_second: 1000
+        burst_count: 1000
+      account:
+        per_second: 1000
+        burst_count: 1000
+      failed_attempts:
+        per_second: 1000
+        burst_count: 1000
+    rc_joins:
+      local:
+        per_second: 1000
+        burst_count: 1000
+      remote:
+        per_second: 1000
+        burst_count: 1000
+    rc_invites:
+      per_room:
+        per_second: 1000
+        burst_count: 1000
+      per_user:
+        per_second: 1000
+        burst_count: 1000
+
+    # The secrets, substituted by the bootstrap script from files on the volume.
+    registration_shared_secret: "@@REGISTRATION_SHARED_SECRET@@"
+    macaroon_secret_key: "@@MACAROON_SECRET_KEY@@"
+    form_secret: "@@FORM_SECRET@@"
+
+  # Synapse's log config is a separate file it reads by path, so it cannot be
+  # folded into the template. Plain stdout at INFO: `kubectl logs` is the only
+  # consumer, and a file-based handler on the volume would just be a second
+  # place to forget to look.
+  log.config: |
+    version: 1
+    formatters:
+      precise:
+        format: '%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(request)s - %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: precise
+        stream: ext://sys.stdout
+    loggers:
+      synapse.storage.SQL:
+        level: WARNING
+    root:
+      level: INFO
+      handlers: [console]
+    disable_existing_loggers: false
+
+  # Runs as an init container, as the same non-root uid as Synapse itself.
+  #
+  # It deliberately does not call `synapse generate`, which would write a whole
+  # config file it then has to be prevented from re-writing. It mints exactly
+  # the four pieces of durable identity — the signing key and three secrets —
+  # each guarded by a `-f` test so an existing instance keeps the identity its
+  # user ids and access tokens were issued under, and then renders the config.
+  bootstrap.sh: |
+    #!/bin/sh
+    set -eu
+
+    cd /data
+
+    # The signing key. `generate_signing_key` is the supported entry point for
+    # minting one on its own; regenerating it would invalidate every event this
+    # server has ever signed, hence the guard.
+    if [ ! -f signing.key ]; then
+      echo "bootstrap: minting a signing key"
+      python -m synapse._scripts.generate_signing_key -o signing.key
+    fi
+
+    # The three secrets. token_urlsafe avoids the shell and YAML quoting
+    # questions a raw byte string would raise, and its alphabet contains no '|',
+    # which is what makes the sed substitution below safe.
+    for name in registration_shared_secret macaroon_secret_key form_secret; do
+      if [ ! -f "secret.$name" ]; then
+        echo "bootstrap: minting $name"
+        python -c 'import secrets; print(secrets.token_urlsafe(32))' > "secret.$name"
+        chmod 600 "secret.$name"
+      fi
+    done
+
+    mkdir -p media_store
+
+    # Render unconditionally, so editing the ConfigMap and restarting is all it
+    # takes to change a setting. Written to a temporary file and moved into
+    # place so a failure here leaves the last good config rather than a
+    # half-written one.
+    echo "bootstrap: rendering homeserver.yaml"
+    sed \
+      -e "s|@@REGISTRATION_SHARED_SECRET@@|$(cat secret.registration_shared_secret)|" \
+      -e "s|@@MACAROON_SECRET_KEY@@|$(cat secret.macaroon_secret_key)|" \
+      -e "s|@@FORM_SECRET@@|$(cat secret.form_secret)|" \
+      /config/homeserver.template.yaml > homeserver.yaml.tmp
+    mv homeserver.yaml.tmp homeserver.yaml
+
+    echo "bootstrap: ready"
