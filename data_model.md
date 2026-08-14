@@ -2,27 +2,28 @@
 
 This document defines the domain model for queer-curves: what users create, what shape it has, and what the system stores. The Matrix event encoding is sketched at the end, but full schema is out of scope here (see `sharing_model.md` once written).
 
-Status: **draft**, v0. Updated 2026-05-07.
+Status: **draft**, v0. Updated 2026-08-14.
 
 ## 1. Overview
 
 A user creates and maintains **Graphs**. Each Graph is a self-contained artifact with:
 
-- a **type** (spectrum or network — extensible to more later),
+- a **type** (spectrum, network, or pronouns — extensible to more later),
 - a **schema** (type-specific structure: axes, regions, edge types, etc.),
 - **data** (type-specific datapoints / current state),
 - **customization** (colors, theme, labels),
 - a **sharing config** (referenced here, defined in `sharing_model.md`),
 - an **owner** and optional **editors**.
 
-The two graph families currently supported are derived from canonical use cases the user provided:
+The graph families currently supported are derived from canonical use cases the user provided:
 
 | Family | Purpose | Canonical example |
 |---|---|---|
 | Spectrum | Identity in an N-dimensional coordinate space, tracked over time | aceflux (1D), genderfluid (2D) |
 | Network | Relational data (people and typed connections) | polycule |
+| Pronouns | Categorical preferences over pronouns and identity/address words | pronoun card |
 
-These two are sufficient for v1. Adding new graph families later is expected — the model leaves room.
+Spectrum and network were sufficient for v1; the pronoun card arrived in `schema_version = 2` (§5). Adding further families is expected — the model leaves room.
 
 ## 2. Common Graph fields
 
@@ -31,15 +32,15 @@ Every Graph, regardless of type, carries:
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | stable identifier; in Matrix encoding this is the room id |
-| `type` | `"spectrum"` \| `"network"` | extensible |
+| `type` | `"spectrum"` \| `"network"` \| `"pronouns"` | extensible |
 | `name` | string | user-set, e.g. "my gender" |
 | `description` | string | user-set, optional |
 | `created_at` | timestamp | |
 | `modified_at` | timestamp | last schema change |
-| `schema_version` | int | for forward-compat (see §7) |
+| `schema_version` | int | for forward-compat (see §8) |
 | `owner` | user reference | only the owner can change schema |
 | `editors` | list of user references | can append datapoints; cannot change schema |
-| `customization` | object | see §5 |
+| `customization` | object | see §6 |
 
 ## 3. Spectrum graphs
 
@@ -49,7 +50,7 @@ A spectrum graph plots a position in an N-dimensional labeled coordinate space, 
 
 Supported in v1: **N = 1, 2, 3**.
 
-3D graphs are rendered as a 2D scatter on axes 0/1 with the third axis encoded as **colour via a ramp** built from the graph's palette — not as a 3D scene. This avoids loading Three.js, keeps the visualization within the chosen flag/palette aesthetic, and trades one axis of position for one axis of hue. (3D scatter via Three.js is no longer planned for v1; see §10.)
+3D graphs are rendered as a 2D scatter on axes 0/1 with the third axis encoded as **colour via a ramp** built from the graph's palette — not as a 3D scene. This avoids loading Three.js, keeps the visualization within the chosen flag/palette aesthetic, and trades one axis of position for one axis of hue. (3D scatter via Three.js is no longer planned for v1; see §11.)
 
 ### 3.2 Axes
 
@@ -190,9 +191,89 @@ Per-viewer legend redaction (the case where some viewers see "sexual" labels and
 
 For v1, network graphs store a **current state only** — list of nodes, edges, edge types. Historical replay (a timeline of "Alex joined the polycule on date X, Bob's edge to Carol changed to type Y on date Z") is deferred to v2; the protocol leaves room (every mutation could be its own event) but the v1 client will treat the network as point-in-time.
 
-## 5. Customization
+## 5. Pronoun graphs
 
-Common to both families:
+A pronoun graph is a **pronoun/gender card**: the pronouns a person uses and the gender, address, and relationship words they want (or don't want) applied to them, each rated on a preference scale the user defines. It is the third graph family, added in `schema_version = 2`.
+
+It exists as its own family rather than as a spectrum because the data is categorical and per-entry rather than positional: "they/them favourite, she/her okay at home, he/him never" is a set of labeled preferences, not a point in a coordinate space. §11 already lists categorical spectrum axes as out of scope, and forcing a card into numeric axes would lose exactly the part users care about — the words themselves.
+
+### 5.1 The preference scale
+
+The card owns its scale as `schema.levels`, an **ordered** list, most-preferred first:
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | stable; referenced by every entry |
+| `label` | string | user-set, e.g. "favourite", "only if we're close", "never" |
+| `color` | string | drives the entry colour on the card |
+| `description` | string | optional, e.g. "fine from people I know well" |
+
+Per-graph rather than a fixed enum for two reasons. Scales differ (some people want yes/no, others want six gradations), and — more importantly — the labels themselves are user language about their own identity. A hardcoded enum would put our words in the user's mouth.
+
+Clients MUST NOT drop entries whose `level_id` no longer matches a level (a scale can be edited after entries exist). Such entries render under an "unsorted" heading and remain editable.
+
+### 5.2 Pronoun sets
+
+`pronouns` is an ordered list of entries:
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | stable |
+| `label` | string | display form, e.g. "she/her" |
+| `forms` | object | optional — see §5.3 |
+| `level_id` | level id | references `schema.levels` |
+| `notes` | string | optional, e.g. "fine at work, not with family" |
+| `color` | string | optional; overrides the level colour |
+
+`label` is free text rather than derived from `forms`, because real cards carry entries that don't decline at all: "any pronouns", "name only", "ask me first". Those entries omit `forms` entirely.
+
+Order is authored, not alphabetical or scale-derived — a card's ordering is a statement of emphasis.
+
+### 5.3 Forms and generated examples
+
+When an entry declines, `forms` carries the English forms plus verb agreement:
+
+| Field | Type | Notes |
+|---|---|---|
+| `subject` | string | required — she / he / they / ey |
+| `object` | string | required — her / him / them / em |
+| `possessive_determiner` | string | optional — her (book) / his / their |
+| `possessive_pronoun` | string | optional — hers / his / theirs |
+| `reflexive` | string | optional — herself / himself / themself |
+| `plural` | bool | optional, default false — true when the subject takes plural agreement ("they are", not "she is") |
+
+Clients render demonstration sentences from these forms, using the templates in `schema.examples` (or built-in defaults when unset). Templates reference forms by placeholder and may request a conjugated verb.
+
+**A template that references a form the entry doesn't supply is skipped, not guessed.** Deriving "her's" from "her", or assuming a reflexive from an object form, would fabricate words the user never wrote — the precise failure this graph family exists to prevent.
+
+### 5.4 Words and groups
+
+`terms` holds the non-pronoun vocabulary, each rated on the same scale:
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | stable |
+| `label` | string | e.g. "nonbinary", "Mx.", "partner" |
+| `group_id` | group id | references `schema.term_groups` |
+| `level_id` | level id | references `schema.levels` |
+| `notes` | string | optional |
+| `color` | string | optional; overrides the level colour |
+
+`schema.term_groups` are the card's sections (`{id, label, description?}`) — by default "identity words", "ways to address me", "relationship words", all user-editable. As with levels, terms in a since-deleted group stay visible under "ungrouped".
+
+### 5.5 Display name
+
+`display_name` is an optional name substituted into example sentences ("Ada brought their own lunch"). It is separate from `name`, which titles the graph, and omitting it keeps the card name-free — the safer default, since a card is the graph type most likely to be shared widely (see `THREATS.md` §11).
+
+### 5.6 Pronoun-card history
+
+Like network graphs (§4.4), a card stores **current state only** in v1. Pronouns do change over time, and the Matrix encoding does retain superseded snapshots in the room timeline, so a viewer holding a history grant can observe past versions — but the client does not model or render a card timeline. First-class "my pronouns over time" is deferred to v2, alongside network history.
+
+Consequence worth stating plainly: **a card is not a safe place to record a preference you want no record of.** Editing an entry replaces the current snapshot; it does not retract the older encrypted snapshots already delivered to a room's members.
+
+## 6. Customization
+
+Common to all three families:
 
 | Field | Type | Notes |
 |---|---|---|
@@ -221,30 +302,37 @@ Network-specific:
 | `edge_style.default_width` | number | |
 | `legend.position` | `"top"` \| `"bottom"` \| `"left"` \| `"right"` \| `"hidden"` | |
 
+Pronoun-card-specific:
+
+| Field | Type | Notes |
+|---|---|---|
+| `layout` | `"level"` \| `"flat"` | default `"level"` — group entries under their preference level, or list them in authored order with the level shown per entry |
+| `show_examples` | bool | default true — render generated example sentences under each set that supplies `forms` (§5.3) |
+
 Customization values can reference theme palette indices (`"@palette[2]"`) or be hard-coded hex — clients should resolve references at render time.
 
-## 6. Edit rights
+## 7. Edit rights
 
 Two roles per graph:
 
 - **Owner**: full control. Can change schema (axes, regions, edge types, customization), append datapoints, invite/revoke viewers, grant/revoke editors, delete the graph. Exactly one owner.
-- **Editor**: can append datapoints (or, for network graphs, mutate node/edge state). Cannot change schema. Cannot manage sharing.
+- **Editor**: can append datapoints (or, for network graphs, mutate node/edge state; for pronoun cards, add and edit pronoun sets and words). Cannot change schema — for a card that means the preference scale and the word groups are the owner's alone. Cannot manage sharing.
 
 Editors are explicitly granted per graph. Default for any new viewer is **not editor**. Editor grants are independent of view grants — editing implies viewing, but viewing does not imply editing.
 
-This maps cleanly to Matrix power levels in the encoding (§9): editors get elevated power for `*.datapoint` event types within the graph's room; only the owner can send `*.graph_def` schema-update events.
+This maps cleanly to Matrix power levels in the encoding (§10): editors get elevated power for `*.datapoint` event types within the graph's room; only the owner can send `*.graph_def` schema-update events.
 
-## 7. Graph lifecycle
+## 8. Graph lifecycle
 
-### 7.1 Creation
+### 8.1 Creation
 
 A new graph is created by its owner: a Matrix room is created with E2EE enabled, the owner publishes the initial `app.queercurves.graph_def`, and the room id becomes the graph id. Default state: owner is the sole member, no editors, no viewers.
 
-### 7.2 Editing
+### 8.2 Editing
 
-See §6 — only the owner can change the schema; editors can append datapoints.
+See §7 — only the owner can change the schema; editors can append datapoints.
 
-### 7.3 Deletion (hard)
+### 8.3 Deletion (hard)
 
 Graph deletion is **hard**. When the owner deletes a graph:
 
@@ -258,7 +346,7 @@ The usual caveat applies: a non-compliant client with valid keys at the time of 
 
 For "stop sharing without deleting" (graph still exists for the owner, just no longer published to viewers), see soft revocation in `sharing_model.md`.
 
-## 8. Schema versioning
+## 9. Schema versioning
 
 Every persisted event carries a `schema_version` integer. Clients reading older `schema_version` data must apply migration shims; clients reading *newer* `schema_version` data than they understand should display a "this graph uses a newer format your client doesn't support yet" message rather than misrender.
 
@@ -266,36 +354,47 @@ Initial release: `schema_version = 1`.
 
 Backwards-incompatible changes (renaming required fields, changing semantics) bump the major version. Additive optional fields do not.
 
-## 9. Matrix encoding (sketch only)
+**Version log:**
+
+| Version | Change |
+|---|---|
+| 1 | Initial release: spectrum and network families. |
+| 2 | Adds the pronoun-card family (§5). Spectrum and network graphs are shape-identical to v1. |
+
+A new *family* bumps the version even though it adds no field to the existing ones. A v1 client encountering `type: "pronouns"` has no way to render it, and the version gate is the mechanism that turns that into an honest "this graph uses a newer format" message instead of an "invalid type" error or a blank graph. The cost is deliberate and known: a v2 client's spectrum export is refused by a v1 client that could in principle have read it.
+
+## 10. Matrix encoding (sketch only)
 
 Full Matrix protocol mapping lives in `sharing_model.md`. High-level:
 
 - Event-type namespace: `app.queercurves.*` (placeholder — final namespace TBD pending domain choice).
 - One Matrix room per (graph × detail-level audience). The room's encrypted timeline carries:
   - `app.queercurves.graph_def` — schema definition (axes/regions/customization/etc.). Latest-wins by event id; only the room owner sends these.
-  - `app.queercurves.datapoint` — individual datapoint events (spectrum) or node/edge mutations (network). Owner and editors send these.
+  - `app.queercurves.datapoint` — individual datapoint events (spectrum), node/edge mutations (network), or pronoun-set/word mutations (pronoun card). Owner and editors send these.
   - `app.queercurves.snapshot` — full current state, posted on viewer-join so new members see *something* immediately even though they can't decrypt history.
   - `app.queercurves.tombstone` — soft revocation / graph deletion marker.
 - Matrix room state events are **not** used for graph data. Reason: state events in encrypted rooms are not themselves encrypted by default; the homeserver would see graph_def in plaintext, defeating E2EE for sensitive labels.
 
-## 10. Out of scope for v1
+## 11. Out of scope for v1
 
 Explicitly deferred (acknowledged but not implemented in MVP):
 
-- **Computed projections between distinct axis systems.** Multiple presentation views of the same data are now first-class (§3.6, §5), but transforming the same canonical state into a *different* axis system (e.g. one gender state projected onto both an "agender↔non-binary × agender↔women" plane and a "genderness × women-to-enby" plane with computed mapping) still requires maintaining two graphs by hand.
+- **Computed projections between distinct axis systems.** Multiple presentation views of the same data are now first-class (§3.6, §6), but transforming the same canonical state into a *different* axis system (e.g. one gender state projected onto both an "agender↔non-binary × agender↔women" plane and a "genderness × women-to-enby" plane with computed mapping) still requires maintaining two graphs by hand.
 - **3D regions.** 3D scatter datapoints are reachable in v1; labeled 3D regions (boxes, volumes) are not.
 - **Network graph history.** Network state is point-in-time in v1.
+- **Pronoun-card history.** A card is point-in-time too (§5.6). "My pronouns over time" is a v2 feature alongside network history.
+- **Non-English pronoun grammar.** The `forms` model in §5.3 is English (five forms plus plural agreement). Languages with grammatical gender agreement across adjectives and verbs need a richer model; until then such users can use label-only entries, which carry no declension and are never conjugated.
 - **Per-viewer legend redaction at the crypto level** (single room with selective decryption). Handled instead via redundant rooms — see `sharing_model.md`.
 - **Region rendering in non-default views.** Regions render in their original cartesian coordinates (the natural-default view). When viewing a graph through a radial view or a time projection, regions are not re-projected and aren't drawn. Authoring regions in non-default coordinate systems is deferred.
 - **Computed/derived datapoints** (e.g. "averaged over last week"). v1 stores raw points; clients may render rolling averages but don't persist them.
 - **Discrete / categorical spectrum axes.** v1 axes are continuous numeric. A categorical axis option is plausibly v1.1.
 - **Linked-node graph navigation.** Nodes with confirmed `subject_ref` are *named* but not navigable in v1 — clicking them does not surface that user's other graphs. The richer feature (cross-graph navigation gated on the linked user's separate share grants) is a v2 extension.
 
-## 11. Canonical test cases
+## 12. Canonical test cases
 
 Any change to this document must remain expressible in the model:
 
-### 10.1 Aceflux — 1D spectrum
+### 12.1 Aceflux — 1D spectrum
 
 ```yaml
 type: spectrum
@@ -322,7 +421,7 @@ data:
 
 History rendering: 2D plot, x = time, y = attraction (with the "attractive" region as a horizontal band, and "gray" as a guide line at y=0.5).
 
-### 10.2 Genderfluid — 2D spectrum
+### 12.2 Genderfluid — 2D spectrum
 
 ```yaml
 type: spectrum
@@ -350,7 +449,7 @@ History rendering: 2D scatter cloud, optionally with a time-colored trail. The "
 
 The user mentioned an alternative axes choice (genderness vs women-to-enby) as another representation. In v1 this is a **separate graph the user maintains in parallel**, not a computed projection of the first.
 
-### 10.3 Polycule — network
+### 12.3 Polycule — network
 
 ```yaml
 type: network
@@ -385,17 +484,80 @@ data:
 
 Two graphs from the owner's perspective, two rooms in Matrix, two encrypted views.
 
-## 12. Decisions log
+### 12.4 Pronoun card
+
+A card whose scale is genuinely mixed — two welcome sets, one that needs closeness, one refused — plus words across all three default groups. Exercises the cases most likely to break a naive implementation: an entry with no declension (`name only`), a partially-declined entry (`ey/em`, subject and object only), and a per-entry note that narrows a level.
+
+```yaml
+type: pronouns
+name: "my pronouns"
+display_name: "Ada"
+schema:
+  levels:
+    - { id: "favourite",  label: "favourite",           color: "#c98aff" }
+    - { id: "okay",       label: "okay",                color: "#80a8ff" }
+    - { id: "close-only", label: "only if we're close", color: "#80ffb0" }
+    - { id: "avoid",      label: "avoid",               color: "#ffb080" }
+    - { id: "never",      label: "never",               color: "#ff8aa8" }
+  term_groups:
+    - { id: "identity",     label: "identity words" }
+    - { id: "address",      label: "ways to address me" }
+    - { id: "relationship", label: "relationship words" }
+data:
+  pronouns:
+    - id: "pn1"
+      label: "they/them"
+      level_id: "favourite"
+      forms: { subject: "they", object: "them", possessive_determiner: "their",
+               possessive_pronoun: "theirs", reflexive: "themself", plural: true }
+    - id: "pn2"
+      label: "she/her"
+      level_id: "okay"
+      notes: "fine with friends, not at work"
+      forms: { subject: "she", object: "her", possessive_determiner: "her",
+               possessive_pronoun: "hers", reflexive: "herself" }
+    # No forms at all — a real card entry that doesn't decline.
+    - { id: "pn3", label: "name only", level_id: "close-only" }
+    # Subject + object only: renders, and yields only the examples those
+    # two forms can satisfy.
+    - id: "pn4"
+      label: "ey/em"
+      level_id: "close-only"
+      forms: { subject: "ey", object: "em" }
+    - { id: "pn5", label: "he/him", level_id: "never" }
+  terms:
+    - { id: "t1", label: "nonbinary",  group_id: "identity",     level_id: "favourite" }
+    - { id: "t2", label: "transfem",   group_id: "identity",     level_id: "favourite" }
+    - { id: "t3", label: "woman",      group_id: "identity",     level_id: "okay", notes: "sometimes" }
+    - { id: "t4", label: "lady",       group_id: "address",      level_id: "avoid" }
+    - { id: "t5", label: "Mx.",        group_id: "address",      level_id: "favourite" }
+    - { id: "t6", label: "sir",        group_id: "address",      level_id: "never" }
+    - { id: "t7", label: "partner",    group_id: "relationship", level_id: "favourite" }
+    - { id: "t8", label: "datemate",   group_id: "relationship", level_id: "okay" }
+    - { id: "t9", label: "girlfriend", group_id: "relationship", level_id: "close-only" }
+```
+
+The example sentences under `pn1` render as "They go to the parade every year." / "I went with them — the flag was theirs." / "They made it themself, their own design." Under `pn4` only the first renders; the other two want forms `ey/em` doesn't supply, and are dropped rather than guessed (§5.3).
+
+## 13. Decisions log
 
 **2026-05-07** — initial open questions resolved:
 
-1. **Spectrum values are continuous in v1.** Discrete / categorical axes deferred (see §10).
-2. **Datapoint deletion is hard.** Redaction events propagate; compliant viewer caches must wipe the datapoint from local storage (§3.4).
-3. **Timestamps are UTC**, display TZ is client-local (§3.4).
-4. **Graph deletion is hard.** Tombstone + kick all members + wipe local caches on compliant clients (§7.3). Soft revocation (just stop publishing) is a separate operation, defined in `sharing_model.md`.
-5. **Linking nodes to real users requires consent.** A node's `subject_ref` triggers a consent request; the link is `pending` until accepted, and the named user can withdraw at any time (§4.1). Cross-graph navigation from such nodes is deferred (§10).
+1. **Spectrum values are continuous in v1.** Discrete / categorical axes deferred (see §11).
+2. **Datapoint deletion is hard.** Redaction events propagate; compliant viewer caches must wipe the datapoint from local storage (§3.5).
+3. **Timestamps are UTC**, display TZ is client-local (§3.5).
+4. **Graph deletion is hard.** Tombstone + kick all members + wipe local caches on compliant clients (§8.3). Soft revocation (just stop publishing) is a separate operation, defined in `sharing_model.md`.
+5. **Linking nodes to real users requires consent.** A node's `subject_ref` triggers a consent request; the link is `pending` until accepted, and the named user can withdraw at any time (§4.1). Cross-graph navigation from such nodes is deferred (§11).
+
+**2026-08-14** — pronoun cards added as a third graph family (§5), `schema_version = 2`:
+
+6. **Pronoun/gender cards are their own family, not a categorical spectrum.** The data is per-entry and categorical; forcing it onto numeric axes would discard the words, which are the content. Categorical spectrum axes remain deferred (§11) and are now unlikely to be needed for this use case.
+7. **The preference scale is per-graph, user-labeled** (§5.1). A fixed enum would put our vocabulary in the user's mouth on the one graph type that is entirely about which words are theirs.
+8. **Missing pronoun forms are never inferred** (§5.3). A template needing a form the user didn't supply is skipped. Fabricating "her's" or a reflexive form is a correctness bug with the same shape as misgendering.
+9. **A new graph family bumps `schema_version`** even though existing families gain no fields (§9). The version gate is what makes an old client say "newer format" instead of "invalid type"; the cost is that v1 clients refuse v2 spectrum exports they could have read.
+10. **Cards are current-state only in v1** (§5.6), like network graphs. Superseded snapshots do remain in the room timeline, so the UI must not imply that editing a card retracts what viewers already received.
 
 **2026-08-14** — network name privacy:
 
-6. **Other people's names are hidden on screen by default** (§4.1). Hidden means *no label*, not a pseudonym — positional placeholders ("Person 1") were tried and rejected, because a stable handle is still something a viewer can screenshot and talk about. The viewer's own node is marked "You", and reveal is press-and-hold, never a sticky toggle. Presentation-layer only — no change to what is stored or shared.
-7. **`is_self` added to nodes** as an additive optional field (§4.1). No `schema_version` bump: per §8 additive optional fields don't bump, and an older client that ignores it simply masks every node including the owner's — which fails towards *more* privacy, not less.
+11. **Other people's names are hidden on screen by default** (§4.1). Hidden means *no label*, not a pseudonym — positional placeholders ("Person 1") were tried and rejected, because a stable handle is still something a viewer can screenshot and talk about. The viewer's own node is marked "You", and reveal is press-and-hold, never a sticky toggle. Presentation-layer only — no change to what is stored or shared.
+12. **`is_self` added to nodes** as an additive optional field (§4.1). No `schema_version` bump for that field on its own: per §9 additive optional fields don't bump, and an older client that ignores it simply masks every node including the owner's — which fails towards *more* privacy, not less. (The version did move to 2 in the same release, for the new pronoun-card family — see decision 9.)

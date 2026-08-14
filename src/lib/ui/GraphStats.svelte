@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Graph } from '$lib/types.js';
+	import { groupByLevel } from '$lib/graphs/pronouns/defaults.js';
 
 	let { graph }: { graph: Graph } = $props();
 
@@ -153,6 +154,35 @@
 			density
 		};
 	});
+
+	const pronounsStats = $derived.by(() => {
+		if (graph.type !== 'pronouns') return null;
+		const sets = graph.pronouns.length;
+		const words = graph.terms.length;
+		const declining = graph.pronouns.filter((p) => p.forms !== undefined).length;
+		const annotated = [...graph.pronouns, ...graph.terms].filter((e) => e.notes).length;
+
+		// Per-level totals across both entry kinds — the card's headline
+		// figure is "how much of this is a yes and how much is a no".
+		const byLevel = groupByLevel(graph.schema.levels, [...graph.pronouns, ...graph.terms]).map(
+			({ level, entries }) => ({
+				id: level?.id ?? '__unsorted',
+				label: level?.label ?? 'unsorted',
+				color: level?.color ?? '#998aaa',
+				count: entries.length
+			})
+		);
+
+		const byGroup = graph.schema.term_groups
+			.map((g) => ({
+				id: g.id,
+				label: g.label,
+				count: graph.terms.filter((t) => t.group_id === g.id).length
+			}))
+			.filter((g) => g.count > 0);
+
+		return { sets, words, declining, annotated, byLevel, byGroup };
+	});
 </script>
 
 {#if graph.type === 'spectrum' && spectrumStats}
@@ -266,6 +296,58 @@
 			</ul>
 		{/if}
 	</section>
+{:else if graph.type === 'pronouns' && pronounsStats}
+	<section class="stats-panel">
+		<h3>Stats</h3>
+		<dl class="kv">
+			<div>
+				<dt>Pronoun sets</dt>
+				<dd>{pronounsStats.sets}</dd>
+			</div>
+			<div>
+				<dt>Words</dt>
+				<dd>{pronounsStats.words}</dd>
+			</div>
+			<div>
+				<dt>With forms</dt>
+				<dd>
+					{pronounsStats.declining}
+					<small class="muted">of {pronounsStats.sets}</small>
+				</dd>
+			</div>
+			{#if pronounsStats.annotated > 0}
+				<div>
+					<dt>With notes</dt>
+					<dd>{pronounsStats.annotated}</dd>
+				</div>
+			{/if}
+		</dl>
+
+		{#if pronounsStats.byLevel.length > 0}
+			<h4>Entries per level</h4>
+			<ul class="type-list">
+				{#each pronounsStats.byLevel as level (level.id)}
+					<li>
+						<span class="swatch dot" style:background={level.color}></span>
+						<span>{level.label}</span>
+						<span class="count muted">{level.count}</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
+		{#if pronounsStats.byGroup.length > 0}
+			<h4>Words per group</h4>
+			<ul class="type-list">
+				{#each pronounsStats.byGroup as group (group.id)}
+					<li>
+						<span>{group.label}</span>
+						<span class="count muted">{group.count}</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
 {/if}
 
 <style>
@@ -351,6 +433,11 @@
 		width: 14px;
 		height: 4px;
 		border-radius: 2px;
+	}
+	.type-list .swatch.dot {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
 	}
 	.type-list .count {
 		margin-left: auto;

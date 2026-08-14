@@ -96,10 +96,11 @@ src/
 ├── lib/
 │   ├── graphs/spectrum/        # SpectrumHistoryChart + view presets
 │   ├── graphs/network/         # NetworkChart (cytoscape, lazy-loaded)
+│   ├── graphs/pronouns/        # PronounCard + example-sentence rendering
 │   ├── presets/palettes.ts     # 18 queer-flag colour palettes
 │   ├── store/                  # localStorage + JSON import/export
 │   ├── ui/                     # forms, pickers, lists
-│   ├── fixtures.ts             # canonical test cases from data_model.md §11
+│   ├── fixtures.ts             # canonical test cases from data_model.md §12
 │   └── types.ts                # domain types
 ├── routes/
 │   ├── +page.svelte            # landing — your graphs, fixtures, palettes
@@ -115,7 +116,7 @@ The single seam to swap for Matrix later is [src/lib/store/graphs.ts](src/lib/st
 
 ### Storage
 
-User-created graphs live in `localStorage` under the key `queer-curves:user-graphs`. To wipe in dev: open DevTools console and run `localStorage.removeItem('queer-curves:user-graphs')`. Fixtures (aceflux, genderfluid, polycule, polycule-redacted) are bundled into the build and are read-only — they live in `src/lib/fixtures.ts`.
+User-created graphs live in `localStorage` under the key `queer-curves:user-graphs`. To wipe in dev: open DevTools console and run `localStorage.removeItem('queer-curves:user-graphs')`. Fixtures (aceflux, genderfluid, mood-energy, polycule, polycule-redacted, pronoun-card) are bundled into the build and are read-only — they live in `src/lib/fixtures.ts`.
 
 JSON export/import works against this same store, so you can hand-edit a graph file and re-import it.
 

@@ -3,6 +3,7 @@
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 	import { activeViews } from '$lib/graphs/spectrum/views.js';
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
+	import PronounCard from '$lib/graphs/pronouns/PronounCard.svelte';
 	import GraphStats from '$lib/ui/GraphStats.svelte';
 	import SpectrumDatapointForm from '$lib/ui/SpectrumDatapointForm.svelte';
 	import SpectrumDatapointList from '$lib/ui/SpectrumDatapointList.svelte';
@@ -10,6 +11,10 @@
 	import NetworkNodeList from '$lib/ui/NetworkNodeList.svelte';
 	import NetworkEdgeForm from '$lib/ui/NetworkEdgeForm.svelte';
 	import NetworkEdgeList from '$lib/ui/NetworkEdgeList.svelte';
+	import PronounSetForm from '$lib/ui/PronounSetForm.svelte';
+	import PronounSetList from '$lib/ui/PronounSetList.svelte';
+	import GenderTermForm from '$lib/ui/GenderTermForm.svelte';
+	import GenderTermList from '$lib/ui/GenderTermList.svelte';
 	import ShareSection from '$lib/ui/ShareSection.svelte';
 	import HoldToReveal from '$lib/ui/HoldToReveal.svelte';
 	import NetworkExportDialog from '$lib/ui/NetworkExportDialog.svelte';
@@ -18,10 +23,13 @@
 	import { downloadDataUrl, downloadGraphAsJson } from '$lib/store/io.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 	import type {
+		GenderTerm,
 		Graph,
 		NetworkEdge,
 		NetworkGraph,
 		NetworkNode,
+		PronounSet,
+		PronounsGraph,
 		SpectrumDatapoint,
 		SpectrumGraph
 	} from '$lib/types.js';
@@ -198,6 +206,73 @@
 		} satisfies NetworkGraph);
 	}
 
+	async function handleAddPronounSet(set: PronounSet) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			pronouns: [...graph.pronouns, set]
+		} satisfies PronounsGraph);
+	}
+
+	async function handleEditPronounSet(updated: PronounSet) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			pronouns: graph.pronouns.map((p) => (p.id === updated.id ? updated : p))
+		} satisfies PronounsGraph);
+	}
+
+	async function handleRemovePronounSet(id: string) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			pronouns: graph.pronouns.filter((p) => p.id !== id)
+		} satisfies PronounsGraph);
+	}
+
+	async function handleReorderPronounSets(ids: string[]) {
+		if (!graph || graph.type !== 'pronouns') return;
+		const byId = new Map(graph.pronouns.map((p) => [p.id, p]));
+		const reordered = ids.map((id) => byId.get(id)).filter((p): p is PronounSet => p !== undefined);
+		// Guard against a stale id list (e.g. two tabs open) dropping entries.
+		if (reordered.length !== graph.pronouns.length) return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			pronouns: reordered
+		} satisfies PronounsGraph);
+	}
+
+	async function handleAddTerm(term: GenderTerm) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			terms: [...graph.terms, term]
+		} satisfies PronounsGraph);
+	}
+
+	async function handleEditTerm(updated: GenderTerm) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			terms: graph.terms.map((t) => (t.id === updated.id ? updated : t))
+		} satisfies PronounsGraph);
+	}
+
+	async function handleRemoveTerm(id: string) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			terms: graph.terms.filter((t) => t.id !== id)
+		} satisfies PronounsGraph);
+	}
+
 	async function handleDelete() {
 		if (!graph) return;
 		if (!confirm(`Delete "${graph.name}"? This can't be undone.`)) return;
@@ -267,8 +342,13 @@
 		<p class="meta">
 			{#if graph.type === 'spectrum'}
 				{graph.schema.dimensions}D spectrum · {pluralize(graph.datapoints.length, 'datapoint')}
-			{:else}
+			{:else if graph.type === 'network'}
 				network · {pluralize(graph.nodes.length, 'node')} · {pluralize(graph.edges.length, 'edge')}
+			{:else}
+				pronoun card · {pluralize(graph.pronouns.length, 'set')} · {pluralize(
+					graph.terms.length,
+					'word'
+				)}
 			{/if}
 			{#if !isUserGraph}
 				<span class="fixture-tag">fixture</span>
@@ -294,7 +374,7 @@
 		<div class="chart">
 			{#if graph.type === 'spectrum'}
 				<SpectrumHistoryChart {graph} view={activeView} />
-			{:else}
+			{:else if graph.type === 'network'}
 				<div class="network-wrap" class:revealed={revealNames}>
 					<NetworkChart
 						bind:this={networkChart}
@@ -313,6 +393,8 @@
 						</div>
 					{/if}
 				</div>
+			{:else}
+				<PronounCard {graph} />
 			{/if}
 		</div>
 
@@ -354,11 +436,21 @@
 						onremove={handleRemoveDatapoint}
 						onedit={handleEditDatapoint}
 					/>
-				{:else}
+				{:else if graph.type === 'network'}
 					<NetworkNodeForm {graph} onsubmit={handleAddNode} />
 					<NetworkNodeList {graph} onremove={handleRemoveNode} onedit={handleEditNode} />
 					<NetworkEdgeForm {graph} onsubmit={handleAddEdge} />
 					<NetworkEdgeList {graph} onremove={handleRemoveEdge} onedit={handleEditEdge} />
+				{:else}
+					<PronounSetForm {graph} onsubmit={handleAddPronounSet} />
+					<PronounSetList
+						{graph}
+						onremove={handleRemovePronounSet}
+						onedit={handleEditPronounSet}
+						onreorder={handleReorderPronounSets}
+					/>
+					<GenderTermForm {graph} onsubmit={handleAddTerm} />
+					<GenderTermList {graph} onremove={handleRemoveTerm} onedit={handleEditTerm} />
 				{/if}
 			</section>
 			<ShareSection graphId={graph.id} />
