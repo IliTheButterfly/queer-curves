@@ -149,6 +149,12 @@ export interface BaseGraph {
 	schema_version: number;
 	owner: UserRef;
 	editors: UserRef[];
+	// Present only on a snapshot sent to a current-only share room
+	// (store/projection.ts): tells the viewer's client this is the present
+	// state, not the record, so the UI can say so honestly (THREATS.md §7
+	// rule 13). Never set on the owner's own copy. Additive and optional —
+	// no schema bump (data_model.md §9).
+	projection?: { grant: 'current' };
 }
 
 // ─── Spectrum graphs ────────────────────────────────────────────────────────

@@ -3,7 +3,8 @@
 		inviteToUserGraph,
 		listUserGraphMembers,
 		revokeGraphAccess,
-		type GraphMember
+		type GraphMember,
+		type ShareGrant
 	} from '$lib/store/graphs.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 
@@ -11,6 +12,9 @@
 
 	let members = $state<GraphMember[]>([]);
 	let invitee = $state('');
+	// Least sharing is the default (THREATS.md §7 rule 1); history is the
+	// grant you opt into.
+	let grant = $state<ShareGrant>('current');
 	let submitting = $state(false);
 	let inviteError = $state<string | null>(null);
 	let inviteSuccess = $state<string | null>(null);
@@ -50,8 +54,11 @@
 		inviteSuccess = null;
 		submitting = true;
 		try {
-			await inviteToUserGraph(graphId, invitee);
-			inviteSuccess = `Invited ${invitee.trim()} — they'll see this graph after they accept.`;
+			await inviteToUserGraph(graphId, invitee, grant);
+			inviteSuccess =
+				grant === 'current'
+					? `Invited ${invitee.trim()} — they'll see the current state after they accept.`
+					: `Invited ${invitee.trim()} — they'll see this graph and its full history after they accept.`;
 			invitee = '';
 			members = await listUserGraphMembers(graphId);
 		} catch (e) {
@@ -98,6 +105,21 @@
 				return membership;
 		}
 	}
+
+	function grantLabel(g: GraphMember['grant']): string {
+		switch (g) {
+			case 'owner':
+				return 'owner';
+			case 'current':
+				return 'current only';
+			case 'history':
+				return 'full history';
+			case 'legacy':
+				// Invited before per-grant rooms existed; they de facto hold
+				// full history, and pretending otherwise would be dishonest.
+				return 'full history (older share)';
+		}
+	}
 </script>
 
 <section class="share">
@@ -108,14 +130,6 @@
 			before inviting anyone.
 		</p>
 	{:else}
-		<!-- Honest disclosure (SECURITY_PLAN.md S4 interim): in the v1
-		     protocol every viewer receives the whole graph, history included.
-		     Until per-grant projections exist, saying anything softer would
-		     be lying about what an invite grants. -->
-		<p class="muted">
-			Inviting someone shares this graph <strong>including its full history</strong> — every datapoint
-			and entry ever recorded, not just the current state.
-		</p>
 		<form onsubmit={handleInvite}>
 			<label class="field">
 				<span class="label">Matrix user id</span>
@@ -128,6 +142,26 @@
 					disabled={submitting}
 				/>
 			</label>
+			<!-- Honest disclosure per grant (THREATS.md §7 rules 1, 2, 13):
+			     least sharing is the default, history is a distinct ceremony,
+			     and each option says exactly what leaves your device. -->
+			<fieldset class="grant">
+				<legend class="label">What they can see</legend>
+				<label class="grant-option">
+					<input type="radio" bind:group={grant} value="current" disabled={submitting} />
+					<span>
+						<strong>Current state only</strong> — where things stand now. Past entries and their timing
+						stay yours.
+					</span>
+				</label>
+				<label class="grant-option">
+					<input type="radio" bind:group={grant} value="history" disabled={submitting} />
+					<span>
+						<strong>Full history</strong> — every datapoint and entry ever recorded, including when each
+						one happened. This can't be un-shared later.
+					</span>
+				</label>
+			</fieldset>
 			{#if inviteError}
 				<p class="error" role="alert">{inviteError}</p>
 			{/if}
@@ -143,10 +177,10 @@
 
 		{#if members.length > 0}
 			<ul class="member-list">
-				{#each members as m (m.userId)}
+				{#each members as m (`${m.roomId}:${m.userId}`)}
 					<li>
 						<span class="user-id">{m.userId}</span>
-						<span class="role">{labelFor(m.membership)}</span>
+						<span class="role">{grantLabel(m.grant)} · {labelFor(m.membership)}</span>
 						{#if m.userId !== selfUserId && (m.membership === 'join' || m.membership === 'invite')}
 							<button
 								type="button"
@@ -276,6 +310,26 @@
 	.small {
 		font-size: 0.85em;
 		margin: var(--space-2) 0 0;
+	}
+	fieldset.grant {
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 4px;
+		padding: var(--space-2) var(--space-3);
+		margin: 0 0 var(--space-2);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+	.grant-option {
+		display: flex;
+		gap: var(--space-2);
+		align-items: baseline;
+		font-size: 0.9em;
+		color: var(--color-fg);
+		cursor: pointer;
+	}
+	.grant-option input {
+		flex: none;
 	}
 	button.revoke {
 		background: transparent;

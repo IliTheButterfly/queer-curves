@@ -112,8 +112,20 @@ try {
 	// Force bob to reload and re-fetch
 	await b.page.goto(`${DEV}/`, { waitUntil: 'domcontentloaded' });
 
-	// Bob opens the graph
-	await b.page.goto(graphUrl, { waitUntil: 'domcontentloaded' });
+	// Bob opens the graph FROM HIS OWN LIST. Since Stage 2, a viewer lives
+	// in a share room with its own room id — alice's primary-room URL is a
+	// room bob was never invited to.
+	let bobGraphHref = null;
+	for (let i = 0; i < 40 && !bobGraphHref; i++) {
+		await b.page.waitForTimeout(500);
+		bobGraphHref = await b.page
+			.locator(`main a:has-text("${graphName}")`)
+			.first()
+			.getAttribute('href')
+			.catch(() => null);
+	}
+	log("bob's graph appears in his own list:", Boolean(bobGraphHref));
+	await b.page.goto(`${DEV}${bobGraphHref}`, { waitUntil: 'domcontentloaded' });
 	let bDp = -1;
 	for (let i = 0; i < 120; i++) {
 		await b.page.waitForTimeout(500);

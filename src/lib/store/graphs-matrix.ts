@@ -15,10 +15,32 @@
 
 import type { Graph } from '$lib/types.js';
 import { getClient } from '$lib/matrix/client.js';
+import { projectGraphForGrant, type ShareGrant } from './projection.js';
+
+export type { ShareGrant };
 
 export const MARKER_EVENT = 'app.queercurves.marker';
 export const SNAPSHOT_EVENT = 'app.queercurves.snapshot';
 export const TOMBSTONE_EVENT = 'app.queercurves.tombstone';
+
+/**
+ * Marker state content. A primary room (the owner's own copy, full graph,
+ * pending consent links included) carries `{ v: 1 }`. A share room — one per
+ * (graph × grant), holding only that grant's projection — additionally
+ * carries `variant` and `parent`.
+ *
+ * `parent` is plaintext room state, so the homeserver learns that two rooms
+ * belong to the same graph. Accepted residual: it already knows both rooms
+ * were created by the same account with overlapping membership and
+ * correlated write times; the link adds structure, not content, and no §7
+ * rule 3 label. The alternative (an owner-side mapping in account_data) is
+ * Stage 3's encrypted-account-data work.
+ */
+export interface MarkerContent {
+	v: number;
+	variant?: ShareGrant;
+	parent?: string;
+}
 
 /**
  * The `createRoom` payload for a graph room. Pure so the security-relevant
@@ -48,11 +70,14 @@ export const TOMBSTONE_EVENT = 'app.queercurves.tombstone';
  *     offered the ciphertext of events from before their join, so a later
  *     key leak can't retroactively become a history grant.
  */
-export function graphRoomCreateOptions(): {
+export function graphRoomCreateOptions(variant?: { kind: ShareGrant; parent: string }): {
 	preset: string;
 	initial_state: { type: string; state_key: string; content: object }[];
 	power_level_content_override: object;
 } {
+	const marker: MarkerContent = variant
+		? { v: 1, variant: variant.kind, parent: variant.parent }
+		: { v: 1 };
 	return {
 		preset: 'private_chat',
 		initial_state: [
@@ -69,7 +94,7 @@ export function graphRoomCreateOptions(): {
 			{
 				type: MARKER_EVENT,
 				state_key: '',
-				content: { v: 1 }
+				content: marker
 			}
 		],
 		power_level_content_override: {
@@ -102,6 +127,31 @@ export interface SnapshotScanEvent {
 	getContent(): unknown;
 	isDecryptionFailure(): boolean;
 	getSender(): string | undefined;
+	/** Origin server timestamp, ms. */
+	getTs(): number;
+}
+
+/** Minimal room shape shared by the state-reading helpers below. */
+interface StateReadableRoom {
+	currentState: {
+		getStateEvents(
+			type: string,
+			key: string
+		):
+			| { getContent(): unknown; getSender(): string | undefined }
+			| { getContent(): unknown; getSender(): string | undefined }[]
+			| null;
+	};
+}
+
+/** The marker state content of a room, or null if it isn't one of ours. */
+export function markerOf(room: StateReadableRoom): MarkerContent | null {
+	const ev = room.currentState.getStateEvents(MARKER_EVENT, '');
+	if (!ev) return null;
+	const one = Array.isArray(ev) ? ev[0] : ev;
+	if (!one) return null;
+	const content = one.getContent() as MarkerContent | null;
+	return content && typeof content === 'object' && typeof content.v === 'number' ? content : null;
 }
 
 function requireClient() {
@@ -160,6 +210,7 @@ export function findLatestGraph(
 
 export async function listMatrixGraphs(): Promise<Graph[]> {
 	const client = requireClient();
+	const me = client.getUserId();
 	const out: Graph[] = [];
 	for (const room of client.getRooms()) {
 		// Two ways to recognise our rooms: the `app.queercurves.marker`
@@ -169,7 +220,12 @@ export async function listMatrixGraphs(): Promise<Graph[]> {
 		// /sync delivers a brand-new room — relying on the marker alone
 		// hides freshly-restored rooms from a second device until the next
 		// state push lands.
-		const marker = room.currentState.getStateEvents(MARKER_EVENT, '');
+		const marker = markerOf(room);
+		// Share rooms we created are projection fan-out targets, not graphs:
+		// the graph itself lives in the primary room. Viewers (who are not
+		// the creator) DO see their share room as the graph — it's the only
+		// copy they have.
+		if (marker?.variant && roomCreator(room) === me) continue;
 		const graph = findLatestGraph(room.getLiveTimeline().getEvents(), roomCreator(room));
 		if (!marker && !graph) continue;
 		if (graph) {
@@ -193,7 +249,20 @@ export async function saveMatrixGraph(graph: Graph): Promise<Graph> {
 	const existing = graph.id ? client.getRoom(graph.id) : null;
 	if (existing) {
 		await scrubRoomName(client, existing.roomId);
+		// Defensive: if this id is a share room (it shouldn't be — owners
+		// edit via the primary room), never write the raw graph into it.
+		const marker = markerOf(existing);
+		if (marker?.variant) {
+			await sendCustomEvent(
+				client,
+				existing.roomId,
+				SNAPSHOT_EVENT,
+				projectGraphForGrant(graph, marker.variant)
+			);
+			return { ...graph, id: existing.roomId };
+		}
 		await sendCustomEvent(client, existing.roomId, SNAPSHOT_EVENT, graph);
+		await fanOutToShareRooms(client, { ...graph, id: existing.roomId });
 		return { ...graph, id: existing.roomId };
 	}
 	// New graph — provision a Matrix room for it.
@@ -211,6 +280,77 @@ export async function saveMatrixGraph(graph: Graph): Promise<Graph> {
 	const stored: Graph = { ...graph, id: roomId };
 	await sendCustomEvent(client, roomId, SNAPSHOT_EVENT, stored);
 	return stored;
+}
+
+/** Share rooms this account created for a given primary graph room. */
+function shareRoomsOf(
+	client: ReturnType<typeof requireClient>,
+	graphId: string
+): { roomId: string; grant: ShareGrant }[] {
+	const me = client.getUserId();
+	const out: { roomId: string; grant: ShareGrant }[] = [];
+	for (const room of client.getRooms()) {
+		const marker = markerOf(room);
+		if (!marker?.variant || marker.parent !== graphId) continue;
+		if (roomCreator(room) !== me) continue;
+		const myMembership = me ? room.getMember(me)?.membership : undefined;
+		if (myMembership !== 'join') continue;
+		out.push({ roomId: room.roomId, grant: marker.variant });
+	}
+	return out;
+}
+
+/**
+ * Push the freshest projection of `graph` into each of its share rooms.
+ * Best-effort per room: one unreachable share room must not fail the
+ * owner's save — the primary snapshot (already sent) is the data.
+ */
+async function fanOutToShareRooms(
+	client: ReturnType<typeof requireClient>,
+	graph: Graph
+): Promise<void> {
+	for (const share of shareRoomsOf(client, graph.id)) {
+		try {
+			await sendCustomEvent(
+				client,
+				share.roomId,
+				SNAPSHOT_EVENT,
+				projectGraphForGrant(graph, share.grant)
+			);
+		} catch (e) {
+			console.warn('[qc.matrix] share-room fan-out failed for', share.roomId, e);
+		}
+	}
+}
+
+/**
+ * Find or create the share room for (graph, grant), returning its room id.
+ * New shares never put a viewer in the primary room: the primary carries the
+ * full graph including pending consent links, and megolm has no per-member
+ * granularity inside one room — the room IS the grant boundary.
+ */
+export async function ensureShareRoom(graphId: string, grant: ShareGrant): Promise<string> {
+	const client = requireClient();
+	const existing = shareRoomsOf(client, graphId).find((s) => s.grant === grant);
+	if (existing) return existing.roomId;
+	const primary = client.getRoom(graphId);
+	if (!primary) throw new Error('Graph room not found');
+	const graph = findLatestGraph(primary.getLiveTimeline().getEvents(), roomCreator(primary));
+	if (!graph) throw new Error('No readable snapshot to share yet — save the graph first.');
+	const res = await client.createRoom(
+		graphRoomCreateOptions({ kind: grant, parent: graphId }) as unknown as Parameters<
+			typeof client.createRoom
+		>[0]
+	);
+	const roomId = res.room_id;
+	await waitForEncryption(client, roomId, 10000);
+	await sendCustomEvent(
+		client,
+		roomId,
+		SNAPSHOT_EVENT,
+		projectGraphForGrant({ ...graph, id: graphId }, grant)
+	);
+	return roomId;
 }
 
 /**
@@ -265,6 +405,18 @@ async function waitForEncryption(
 
 export async function deleteMatrixGraph(id: string): Promise<void> {
 	const client = requireClient();
+	// Share rooms first, then the primary: each gets the same
+	// tombstone → kick everyone → leave sequence.
+	for (const share of shareRoomsOf(client, id)) {
+		await tombstoneKickAndLeave(client, share.roomId);
+	}
+	await tombstoneKickAndLeave(client, id);
+}
+
+async function tombstoneKickAndLeave(
+	client: ReturnType<typeof requireClient>,
+	id: string
+): Promise<void> {
 	const room = client.getRoom(id);
 	if (!room) return;
 	// Best-effort tombstone so any other members see the deletion before we
@@ -316,7 +468,17 @@ export async function revokeMatrixGraphAccess(graphId: string, userId: string): 
 	if (userId === client.getUserId()) {
 		throw new Error("You can't revoke your own access — delete the graph instead.");
 	}
-	await client.kick(graphId, userId, 'access revoked by owner');
+	// A member may sit in the primary room (legacy, pre-Stage-2 shares) or
+	// in any share room; revoking means kicking them wherever they are.
+	const roomIds = [graphId, ...shareRoomsOf(client, graphId).map((s) => s.roomId)];
+	let kicked = false;
+	for (const roomId of roomIds) {
+		const membership = client.getRoom(roomId)?.getMember(userId)?.membership;
+		if (membership !== 'join' && membership !== 'invite') continue;
+		await client.kick(roomId, userId, 'access revoked by owner');
+		kicked = true;
+	}
+	if (!kicked) throw new Error('That account is not a member of this graph.');
 }
 
 export interface GraphMember {
@@ -324,6 +486,14 @@ export interface GraphMember {
 	displayName: string;
 	/** join | invite | leave | ban — straight from m.room.member content. */
 	membership: string;
+	/**
+	 * What this member was granted, derived from which room they're in.
+	 * 'owner' is the creator; 'legacy' is a pre-Stage-2 member of the
+	 * primary room, who de facto holds full history.
+	 */
+	grant: 'owner' | ShareGrant | 'legacy';
+	/** The room this membership lives in — the kick target for a revoke. */
+	roomId: string;
 }
 
 /**
@@ -362,13 +532,34 @@ export function roomCreator(room: {
 
 export async function listMatrixGraphMembers(id: string): Promise<GraphMember[]> {
 	const client = requireClient();
-	const room = client.getRoom(id);
-	if (!room) return [];
-	return room.currentState.getMembers().map((m) => ({
-		userId: m.userId,
-		displayName: m.name ?? m.userId,
-		membership: m.membership ?? 'leave'
-	}));
+	const primary = client.getRoom(id);
+	if (!primary) return [];
+	const creator = roomCreator(primary);
+	const out: GraphMember[] = [];
+	for (const m of primary.currentState.getMembers()) {
+		out.push({
+			userId: m.userId,
+			displayName: m.name ?? m.userId,
+			membership: m.membership ?? 'leave',
+			grant: m.userId === creator ? 'owner' : 'legacy',
+			roomId: id
+		});
+	}
+	for (const share of shareRoomsOf(client, id)) {
+		const room = client.getRoom(share.roomId);
+		if (!room) continue;
+		for (const m of room.currentState.getMembers()) {
+			if (m.userId === creator) continue;
+			out.push({
+				userId: m.userId,
+				displayName: m.name ?? m.userId,
+				membership: m.membership ?? 'leave',
+				grant: share.grant,
+				roomId: share.roomId
+			});
+		}
+	}
+	return out;
 }
 
 /**
@@ -378,7 +569,11 @@ export async function listMatrixGraphMembers(id: string): Promise<GraphMember[]>
  * unreadable to them unless the inviter explicitly shares history via key
  * backup or device-to-device key forwarding (sharing_model.md §7).
  */
-export async function inviteToMatrixGraph(graphId: string, userId: string): Promise<void> {
+export async function inviteToMatrixGraph(
+	graphId: string,
+	userId: string,
+	grant: ShareGrant = 'current'
+): Promise<void> {
 	const client = requireClient();
 	const trimmed = userId.trim();
 	if (!trimmed) throw new Error('Enter a Matrix user id (e.g. @alice:localhost).');
@@ -390,7 +585,19 @@ export async function inviteToMatrixGraph(graphId: string, userId: string): Prom
 	if (trimmed === client.getUserId()) {
 		throw new Error("That's your own account — you already have access.");
 	}
-	await client.invite(graphId, trimmed);
+	const shareRoomId = await ensureShareRoom(graphId, grant);
+	// Changing someone's grant means changing which room they're in: kick
+	// them out of any *other* share room of this graph first, so they never
+	// hold two copies at different grants.
+	for (const share of shareRoomsOf(client, graphId)) {
+		if (share.roomId === shareRoomId) continue;
+		const room = client.getRoom(share.roomId);
+		const membership = room?.getMember(trimmed)?.membership;
+		if (membership === 'join' || membership === 'invite') {
+			await client.kick(share.roomId, trimmed, 'grant changed by owner');
+		}
+	}
+	await client.invite(shareRoomId, trimmed);
 }
 
 /**
@@ -501,4 +708,87 @@ export async function acceptMatrixInvite(roomId: string): Promise<void> {
 export async function declineMatrixInvite(roomId: string): Promise<void> {
 	const client = requireClient();
 	await client.leave(roomId);
+}
+
+// ─── Weekly heartbeat (SECURITY_PLAN.md S7, sharing_model.md §6.3) ─────────
+//
+// Every write is event-driven, so the homeserver reads activity timing
+// straight off the timeline — for an occurrence graph, that's the log times
+// of the thing being counted. An unconditional periodic re-send flattens
+// "did anything change this week" to a constant yes. Honest limits: it adds
+// noise, it does not remove the real writes; per-write timing is only truly
+// hidden by batching/coarse timestamps (THREATS.md §9, scoped v1.x).
+
+export const HEARTBEAT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Newest timestamp of anything that could be one of our app events. Counts
+ * still-encrypted events too (`m.room.encrypted` is what an app event looks
+ * like before/without decryption): timing is metadata, and a heartbeat
+ * decision must not depend on whether decryption has caught up.
+ */
+export function latestAppEventTs(events: readonly SnapshotScanEvent[]): number | null {
+	for (let i = events.length - 1; i >= 0; i--) {
+		const type = events[i].getType();
+		if (type === SNAPSHOT_EVENT || type === TOMBSTONE_EVENT || type === 'm.room.encrypted') {
+			return events[i].getTs();
+		}
+	}
+	return null;
+}
+
+/** Pure decision: re-send only when there is something to re-send and it's stale. */
+export function needsHeartbeat(
+	latestTs: number | null,
+	now: number,
+	maxAgeMs: number = HEARTBEAT_MAX_AGE_MS
+): boolean {
+	return latestTs !== null && now - latestTs > maxAgeMs;
+}
+
+/**
+ * Re-send a stale room's latest content. Called once per app open, after
+ * sync has settled. Best-effort per room; two of the owner's devices doing
+ * this concurrently just produces a duplicate snapshot, which
+ * findLatestGraph tolerates by construction.
+ */
+export async function sendHeartbeats(now: number = Date.now()): Promise<number> {
+	const client = requireClient();
+	const me = client.getUserId();
+	let sent = 0;
+	for (const room of client.getRooms()) {
+		const marker = markerOf(room);
+		if (!marker) continue;
+		if (roomCreator(room) !== me) continue;
+		if (me && room.getMember(me)?.membership !== 'join') continue;
+		if (!needsHeartbeat(latestAppEventTs(room.getLiveTimeline().getEvents()), now)) continue;
+		try {
+			if (marker.variant && marker.parent) {
+				// Re-project from the primary so the share room heartbeat also
+				// heals any missed fan-out.
+				const primary = client.getRoom(marker.parent);
+				const graph = primary
+					? findLatestGraph(primary.getLiveTimeline().getEvents(), roomCreator(primary))
+					: null;
+				if (!graph) continue;
+				await sendCustomEvent(
+					client,
+					room.roomId,
+					SNAPSHOT_EVENT,
+					projectGraphForGrant({ ...graph, id: marker.parent }, marker.variant)
+				);
+			} else {
+				const graph = findLatestGraph(room.getLiveTimeline().getEvents(), me);
+				if (!graph) continue;
+				await sendCustomEvent(client, room.roomId, SNAPSHOT_EVENT, {
+					...graph,
+					id: room.roomId
+				});
+			}
+			sent++;
+		} catch (e) {
+			console.warn('[qc.matrix] heartbeat failed for', room.roomId, e);
+		}
+	}
+	return sent;
 }

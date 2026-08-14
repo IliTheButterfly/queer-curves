@@ -32,10 +32,10 @@ Everything the Matrix layer does today, against `sharing_model.md`.
 | Accept / decline invites                          | §5               | **Done.**                                                                                                                    |
 | Deletion (tombstone + kick + leave)               | §10.3            | **Done** (Stage 1). Tombstone, then kick every member, then leave — in that order.                                           |
 | Contacts & groups                                 | §3.2, §4         | **Not started.** No account_data at all.                                                                                     |
-| Grant types (view current / history / edit)       | §5.1, §8, §9     | **Not started.** Every invite is the same grant.                                                                             |
-| History grants (`m.forwarded_room_key`)           | §8.2             | **Not started** — and moot until §4.2 is resolved.                                                                           |
+| Grant types (view current / history)              | §5.1, §8         | **Done** (Stage 2). Per-grant share rooms + projections; `edit` stays out pending §7 Q3.                                     |
+| History grants (`m.forwarded_room_key`)           | §8.2             | **Superseded** — §4.2 accepted; history grants are a projection choice, key forwarding kept for a future event-stream model. |
 | Soft / hard revocation                            | §10.1, §10.2     | **Done** (Stage 1). Hard revoke = per-member kick in the share UI; soft revocation is the documented absence of sends.       |
-| Weekly heartbeat snapshot                         | §6.3             | **Not started.** T17 mitigation is currently unimplemented.                                                                  |
+| Weekly heartbeat snapshot                         | §6.3             | **Done** (Stage 2), and honestly partial: it flattens "did anything change", not per-write timing (see S7).                  |
 | Detail-level variant rooms                        | §7               | **Not started** (network graphs only, deferred by design).                                                                   |
 | `subject_ref` consent handshake                   | §12              | **Not started.** `link_status` is typed in `types.ts`; no to-device traffic.                                                 |
 | Device verification / cross-signing of _contacts_ | §3.2 `verified`  | **Not started.** See S3 — this is the most serious gap.                                                                      |
@@ -86,6 +86,7 @@ So a hostile homeserver (A4) or federated peer (A5) can add a device to a member
 - **Rules:** §7 rule 1 (default to least sharing) and rule 2 (history grants are special — the ceremony exists, and grants history without being invoked).
 - **Fix (Stage 2, the largest piece of work in this plan):** a snapshot must be a _projection_ of the graph for a given grant, not the graph. Concretely, a `currentView(graph)` function per family — the schema, customization, and only what "current" means for that family (latest datapoint per axis; counter totals without the per-entry timestamps; the card as it stands) — with the full graph sent only to grants that carry `view history`. This is a store-layer change, not a Matrix one: `saveMatrixGraph` needs to know which room it is writing for and at which grant, which is also exactly what §7 detail-level variant rooms need. Doing S4 and §7 variants with one mechanism is the right call.
 - **Until it lands:** the share UI must say that sharing a graph shares its whole history. That sentence is currently false in the docs and absent from the UI.
+- **Status:** _fixed in Stage 2_ — see §5.
 
 ### S5 — No revocation of any kind (High)
 
@@ -188,12 +189,22 @@ What landed, per gap:
 - **S10 (filter half):** `redactPendingLinks` in `graphs/network/privacy.ts` strips unconfirmed `subject_ref`s from the graph object non-owner viewers render/export. The handshake, and keeping the ref out of the published snapshot, remain Stage 3 / Stage 2.
 - **S4 interim disclosure:** the share form now states that inviting shares the graph's full history.
 
-### Stage 2 — grants that mean something (S4, S7, and §7 variants)
+### Stage 2 — grants that mean something (S4, S7, and §7 variants) _(landed 2026-08-14)_
 
 The projection mechanism: `currentView()` per graph family, grant records per (graph, contact), a share dialog with `view current` / `view history` / `edit` per §5.1, and the weekly heartbeat. This is where the detail-level variant rooms (§7) become nearly free, and where the share-dialog honest-disclosure copy (`THREATS.md` §9 open items, including the pronoun-card and occurrence-timing lines) lands.
 
 **Proves:** a viewer with `view current` cannot reconstruct history; upgrading to `view history` gives it to them.
 **Probes:** `grant-probe.mjs` — assert on the _decrypted event content_ the viewer received, not on what the UI renders. The bug class here is a projection that leaks a field, and only content assertions catch it.
+
+What landed:
+
+- **Projections (S4):** `store/projection.ts`, pure and negatively tested. Per family: spectrum keeps only the newest datapoint; occurrence collapses each counter to one synthetic entry carrying its interval total, stamped at the window boundary (no real log time, note, tag, or entry id survives); network and pronouns are their current state. Both grants strip unconfirmed `subject_ref`s — the S10 "publish half" lands here. Current-only payloads carry `projection: { grant: 'current' }` so the viewer's UI can disclose it (additive optional field, no schema bump).
+- **Share rooms:** grants are enforced by room membership — `{ v: 1, variant, parent }` markers, one room per (graph × grant), created on first use. The owner's primary room is owner-only for all new shares and is the only room carrying pending consent links. Accepted residual, documented in `graphs-matrix.ts`: the plaintext `parent` pointer tells the homeserver two rooms belong together (it could already infer this from membership and write timing). Saves fan out projections to share rooms; the on-join re-send re-projects from the primary; grant changes move the member between rooms (kick + invite). Pre-Stage-2 members of primary rooms are shown honestly as "full history (older share)".
+- **Share dialog:** grant radio, least-sharing default (`current`), per-grant disclosure copy; `edit` deliberately absent pending §7 Q3.
+- **Heartbeat (S7):** weekly unconditional re-send per owned room on app open (`sendHeartbeats`), treated as the partial mitigation it is — it flattens "did anything change", not per-write timing (batching/coarse timestamps stay v1.x).
+- **Docs:** `sharing_model.md` §8 amended per §4.1/§4.2 (decisions log entry 7).
+
+Deferred from this stage: grant records per (graph, contact) as a _data structure_ — the room family IS the grant record in v1; a separate record becomes necessary with contacts/groups (Stage 3). §7 detail-level variant rooms share the mechanism but the network detail-level projection itself is still to be specified.
 
 ### Stage 3 — trust and identity (S3, S6, S10 handshake, contacts/groups)
 
@@ -218,6 +229,8 @@ S3 is the most serious gap in this plan and sits in the last stage — deliberat
 4. **Pre-existing title leak (S1 residual).** Should the app tell existing users that graph titles created before the fix were visible to their homeserver? A one-time notice is the §7-rule-13 answer; it also tells every user something alarming about data that, on the dev homeserver, only they ever saw.
 
 ## 8. Decisions log
+
+**2026-08-14 (later still)** — Stage 2 landed: S4 (per-grant projections + share rooms), S7 (weekly heartbeat), the S10 publish-half (unconfirmed links stripped from every projection), and the §4.1/§4.2 amendments accepted and written into `sharing_model.md` §8. T2/T4/T5's "default current-only grants" mitigation is now real for all new shares; members added before Stage 2 hold full history and are labelled as such. `edit` grants remain unshipped pending §7 Q3.
 
 **2026-08-14 (later)** — Stage 1 landed: S5, S8, S9, the S2 reader-side sender check, the S10 render filter, and the S4 interim share-UI disclosure. Details in §5 Stage 1. The §7 open questions remain open; nothing in Stage 1 pre-empted them.
 
