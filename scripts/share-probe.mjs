@@ -85,13 +85,13 @@ try {
 
 	// Bob sees the invite on his landing page
 	await b.page.goto(`${DEV}/`, { waitUntil: 'domcontentloaded' });
+	// Invites are unnamed by design (no plaintext room name — SECURITY_PLAN.md
+	// S1/S8), so the list identifies the inviter, not the graph.
 	let sawInvite = false;
 	for (let i = 0; i < 30 && !sawInvite; i++) {
 		await b.page.waitForTimeout(500);
 		const text = (await b.page.locator('main').textContent()) ?? '';
-		sawInvite =
-			(text.includes(graphName) || text.includes(graphUrl.split('/').pop() ?? '')) &&
-			text.includes('Pending invites');
+		sawInvite = text.includes(`@${ALICE}:localhost`) && text.includes('Pending invites');
 	}
 	log('bob sees invite on home:', sawInvite);
 

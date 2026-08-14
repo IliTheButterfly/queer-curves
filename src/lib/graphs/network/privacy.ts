@@ -79,6 +79,26 @@ export interface NamedMember {
 	unconfirmedLink: boolean;
 }
 
+// Viewer-side consent filter (sharing_model.md §12, SECURITY_PLAN.md S10).
+// A subject_ref names a real account; until that account confirms the link,
+// non-owner viewers must not see it — a pending link is an unconsented
+// claim about a real person. This strips unconfirmed refs from the graph a
+// viewer renders (so nothing downstream — chart, export dialog, self
+// detection — can act on them). It is the render half of the protection;
+// keeping the ref out of the *published* snapshot is the Stage 2 projection
+// work. Owners keep the full view: they need to see and manage pending
+// links.
+export function redactPendingLinks(graph: NetworkGraph): NetworkGraph {
+	return {
+		...graph,
+		nodes: graph.nodes.map((n) => {
+			if (!n.subject_ref || n.link_status === 'confirmed') return n;
+			const { subject_ref: _ref, link_status: _status, ...rest } = n;
+			return rest;
+		})
+	};
+}
+
 export function namedMembers(graph: NetworkGraph, selfUserId?: UserRef | null): NamedMember[] {
 	return graph.nodes
 		.filter((n) => !isSelfNode(n, selfUserId) && n.label.trim().length > 0)

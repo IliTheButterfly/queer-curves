@@ -30,11 +30,11 @@ Everything the Matrix layer does today, against `sharing_model.md`.
 | Recovery-key restore on a new device              | §15.1            | **Done** (`restoreFromRecoveryKey`).                                                                                         |
 | Invite a viewer                                   | §5.1             | **Partial.** Raw Matrix-ID invite only; no contacts, no groups, no grant types.                                              |
 | Accept / decline invites                          | §5               | **Done.**                                                                                                                    |
-| Deletion (tombstone + leave)                      | §10.3            | **Partial.** Tombstone is published, but members are not kicked (S5).                                                        |
+| Deletion (tombstone + kick + leave)               | §10.3            | **Done** (Stage 1). Tombstone, then kick every member, then leave — in that order.                                           |
 | Contacts & groups                                 | §3.2, §4         | **Not started.** No account_data at all.                                                                                     |
 | Grant types (view current / history / edit)       | §5.1, §8, §9     | **Not started.** Every invite is the same grant.                                                                             |
 | History grants (`m.forwarded_room_key`)           | §8.2             | **Not started** — and moot until §4.2 is resolved.                                                                           |
-| Soft / hard revocation                            | §10.1, §10.2     | **Not started.** No kick path exists.                                                                                        |
+| Soft / hard revocation                            | §10.1, §10.2     | **Done** (Stage 1). Hard revoke = per-member kick in the share UI; soft revocation is the documented absence of sends.       |
 | Weekly heartbeat snapshot                         | §6.3             | **Not started.** T17 mitigation is currently unimplemented.                                                                  |
 | Detail-level variant rooms                        | §7               | **Not started** (network graphs only, deferred by design).                                                                   |
 | `subject_ref` consent handshake                   | §12              | **Not started.** `link_status` is typed in `types.ts`; no to-device traffic.                                                 |
@@ -172,12 +172,21 @@ S1, S2. Pure-function `graphRoomCreateOptions()`, plaintext-name scrub, unit tes
 **Proves:** a newly created graph room carries no plaintext label, and no member but the owner can write to it.
 **Probe:** extend `share-probe.mjs` to assert the invitee's client sees no `m.room.name` and gets a 403 on a snapshot send.
 
-### Stage 1 — the verbs that are missing (S5, S8, S9, S2 follow-up, S10 filter)
+### Stage 1 — the verbs that are missing (S5, S8, S9, S2 follow-up, S10 filter) _(landed 2026-08-14)_
 
 Revocation (soft/hard, distinct copy, per-member revoke), deletion that kicks before leaving, sender check in `findLatestGraph`, invite filtering, homeserver-URL constraints, pending-link render filter.
 
 **Proves:** an owner can actually take access away, and the three revocation verbs are distinguishable in the UI.
-**Probes:** new `revoke-probe.mjs` (two users: share → verify read → kick → verify the next snapshot is unreadable to the kicked user); extend `delete-probe.mjs` for the kick-then-leave order.
+**Probes:** new `revoke-probe.mjs` (two users: share → verify read → kick → verify the next snapshot is unreadable to the kicked user, plus the delete path's kick-then-leave order — folded in here rather than extending `delete-probe.mjs`, since the order check needs a second user anyway).
+
+What landed, per gap:
+
+- **S5:** `revokeMatrixGraphAccess` (kick; megolm rotates on next send), per-member Remove in `ShareSection.svelte` with the can't-take-back caveat, and `deleteMatrixGraph` now kicks every member after the tombstone and before leaving. Soft revocation deliberately has no code path — it is "stop updating", i.e. the absence of sends, and the share UI says so.
+- **S2 follow-up:** `findLatestGraph` takes the room creator and ignores snapshots _and tombstones_ from anyone else (a viewer must not be able to vanish the graph for everyone either). When the create event hasn't synced, the check is skipped rather than blanking the UI — server-side power levels still hold.
+- **S8:** invites are filtered on stripped state (`isPlausibleGraphInvite`: unnamed + encrypted + invite-only), the invite UI shows the inviter rather than a spoofable room name, and `acceptMatrixInvite` leaves again and reports if no marker materialises within 15s of joining.
+- **S9:** `matrix/homeserver.ts` — https required except loopback, bare hostnames assume https, `.well-known/matrix/client` delegation honoured, and a well-known that delegates to plain http is a hard error (it must not be able to downgrade).
+- **S10 (filter half):** `redactPendingLinks` in `graphs/network/privacy.ts` strips unconfirmed `subject_ref`s from the graph object non-owner viewers render/export. The handshake, and keeping the ref out of the published snapshot, remain Stage 3 / Stage 2.
+- **S4 interim disclosure:** the share form now states that inviting shares the graph's full history.
 
 ### Stage 2 — grants that mean something (S4, S7, and §7 variants)
 
@@ -209,5 +218,7 @@ S3 is the most serious gap in this plan and sits in the last stage — deliberat
 4. **Pre-existing title leak (S1 residual).** Should the app tell existing users that graph titles created before the fix were visible to their homeserver? A one-time notice is the §7-rule-13 answer; it also tells every user something alarming about data that, on the dev homeserver, only they ever saw.
 
 ## 8. Decisions log
+
+**2026-08-14 (later)** — Stage 1 landed: S5, S8, S9, the S2 reader-side sender check, the S10 render filter, and the S4 interim share-UI disclosure. Details in §5 Stage 1. The §7 open questions remain open; nothing in Stage 1 pre-empted them.
 
 **2026-08-14** — document created. Stage 0 (S1, S2) landed with it. Ten gaps registered, four doc amendments proposed (§4), four questions open (§7). The three flagged **Critical** are S1 (fixed), S3 (unverified devices) and S4 (current-only is not current-only); S3 and S4 are both cases where `THREATS.md` claims a mitigation the code does not implement, which is the class of gap this document exists to prevent.

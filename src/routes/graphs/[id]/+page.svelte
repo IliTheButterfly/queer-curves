@@ -23,7 +23,11 @@
 	import ShareSection from '$lib/ui/ShareSection.svelte';
 	import HoldToReveal from '$lib/ui/HoldToReveal.svelte';
 	import NetworkExportDialog from '$lib/ui/NetworkExportDialog.svelte';
-	import { hasHideableNames, namedMembers } from '$lib/graphs/network/privacy.js';
+	import {
+		hasHideableNames,
+		namedMembers,
+		redactPendingLinks
+	} from '$lib/graphs/network/privacy.js';
 	import { deleteUserGraph, getUserGraph, isOwnGraph, saveUserGraph } from '$lib/store/graphs.js';
 	import { downloadDataUrl, downloadGraphAsJson } from '$lib/store/io.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
@@ -334,10 +338,23 @@
 	let showExportDialog = $state(false);
 
 	const selfUserId = $derived(matrixStore.session?.userId ?? null);
-	const canHideNames = $derived(
-		graph?.type === 'network' ? hasHideableNames(graph, selfUserId) : false
+	// What a network graph looks like to *this* viewer: the owner sees
+	// everything (they manage pending links); anyone the graph was shared
+	// with gets unconfirmed subject_ref links stripped before any component
+	// can render or export them (sharing_model.md §12 consent).
+	const viewedNetworkGraph = $derived(
+		graph?.type === 'network'
+			? isUserGraph && !isEditable
+				? redactPendingLinks(graph)
+				: graph
+			: null
 	);
-	const exportMembers = $derived(graph?.type === 'network' ? namedMembers(graph, selfUserId) : []);
+	const canHideNames = $derived(
+		viewedNetworkGraph ? hasHideableNames(viewedNetworkGraph, selfUserId) : false
+	);
+	const exportMembers = $derived(
+		viewedNetworkGraph ? namedMembers(viewedNetworkGraph, selfUserId) : []
+	);
 
 	function handleExportPng() {
 		if (!graph || graph.type !== 'network') return;
@@ -462,7 +479,7 @@
 				<div class="network-wrap" class:revealed={revealNames}>
 					<NetworkChart
 						bind:this={networkChart}
-						{graph}
+						graph={viewedNetworkGraph ?? graph}
 						{selfUserId}
 						reveal={revealNames}
 						onPositionsChange={handleNetworkPositions}
