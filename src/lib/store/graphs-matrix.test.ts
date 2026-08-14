@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	findLatestGraph,
 	graphRoomCreateOptions,
+	isPlausibleGraphInvite,
 	MARKER_EVENT,
 	SNAPSHOT_EVENT,
 	TOMBSTONE_EVENT,
@@ -10,20 +11,24 @@ import {
 import { acefluxFixture } from '../fixtures.js';
 import type { SpectrumGraph } from '../types.js';
 
+const OWNER = '@owner:localhost';
+
 function event(opts: {
 	type: string;
 	content?: unknown;
 	decryptionFailure?: boolean;
+	sender?: string;
 }): SnapshotScanEvent {
 	return {
 		getType: () => opts.type,
 		getContent: () => opts.content ?? {},
-		isDecryptionFailure: () => opts.decryptionFailure ?? false
+		isDecryptionFailure: () => opts.decryptionFailure ?? false,
+		getSender: () => opts.sender ?? OWNER
 	};
 }
 
-function snapshot(graph: SpectrumGraph): SnapshotScanEvent {
-	return event({ type: SNAPSHOT_EVENT, content: graph });
+function snapshot(graph: SpectrumGraph, sender?: string): SnapshotScanEvent {
+	return event({ type: SNAPSHOT_EVENT, content: graph, sender });
 }
 
 const newer: SpectrumGraph = {
@@ -135,6 +140,75 @@ describe('findLatestGraph', () => {
 			event({ type: 'm.room.member' })
 		];
 		expect(findLatestGraph(events)?.name).toBe('newer');
+	});
+
+	// SECURITY_PLAN.md S2 follow-up. Power levels stop a viewer *sending* a
+	// snapshot, but they're enforced by the sender's homeserver on a federated
+	// send — the reader must not trust them alone.
+	describe('sender check', () => {
+		it('ignores a snapshot from someone other than the owner', () => {
+			const events = [snapshot(older), snapshot(newer, '@viewer:evil.example')];
+			expect(findLatestGraph(events, OWNER)?.name).toBe('older');
+		});
+
+		it('ignores a tombstone from someone other than the owner', () => {
+			// A viewer must not be able to make the graph vanish for everyone.
+			const events = [
+				snapshot(newer),
+				event({
+					type: TOMBSTONE_EVENT,
+					content: { reason: 'gone' },
+					sender: '@viewer:evil.example'
+				})
+			];
+			expect(findLatestGraph(events, OWNER)?.name).toBe('newer');
+		});
+
+		it('still honours the owner’s own tombstone', () => {
+			const events = [
+				snapshot(newer),
+				event({ type: TOMBSTONE_EVENT, content: { reason: 'gone' } })
+			];
+			expect(findLatestGraph(events, OWNER)).toBeNull();
+		});
+
+		it('skips the check when the owner is unknown', () => {
+			// If m.room.create hasn't synced yet we can't attribute anything;
+			// hiding the graph would punish availability for a defence-in-depth
+			// check the server already enforces. Accept, don't blank the UI.
+			const events = [snapshot(newer, '@whoever:localhost')];
+			expect(findLatestGraph(events, null)?.name).toBe('newer');
+		});
+	});
+});
+
+// SECURITY_PLAN.md S8: pre-join filtering on the only thing an invitee can
+// see — stripped state. Graph rooms are unnamed, encrypted, invite-only.
+describe('isPlausibleGraphInvite', () => {
+	const graphLike = { hasName: false, isEncrypted: true, joinRule: 'invite' as string | null };
+
+	it('accepts an unnamed, encrypted, invite-only room', () => {
+		expect(isPlausibleGraphInvite(graphLike)).toBe(true);
+	});
+
+	it('rejects a named room', () => {
+		// Our rooms never carry m.room.name (S1); anything named is either not
+		// ours or a lure dressed up as a graph.
+		expect(isPlausibleGraphInvite({ ...graphLike, hasName: true })).toBe(false);
+	});
+
+	it('rejects an unencrypted room', () => {
+		expect(isPlausibleGraphInvite({ ...graphLike, isEncrypted: false })).toBe(false);
+	});
+
+	it('rejects a publicly-joinable room', () => {
+		expect(isPlausibleGraphInvite({ ...graphLike, joinRule: 'public' })).toBe(false);
+	});
+
+	it('tolerates a missing join_rules event', () => {
+		// Stripped state isn't guaranteed complete; encryption is the hard
+		// requirement, join rules are corroboration.
+		expect(isPlausibleGraphInvite({ ...graphLike, joinRule: null })).toBe(true);
 	});
 });
 

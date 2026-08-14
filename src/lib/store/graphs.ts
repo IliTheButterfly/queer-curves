@@ -20,6 +20,7 @@ import {
 	listPendingMatrixInvites,
 	matrixGraphCreator,
 	type PendingInvite,
+	revokeMatrixGraphAccess,
 	saveMatrixGraph
 } from './graphs-matrix.js';
 
@@ -193,6 +194,21 @@ export async function inviteToUserGraph(graphId: string, userId: string): Promis
 		throw new Error('Log in and set up encryption to share graphs.');
 	}
 	await inviteToMatrixGraph(graphId, userId);
+}
+
+/**
+ * Hard revocation: kick a member out of a shared graph. Future changes are
+ * encrypted with a rotated session they never receive; what they already
+ * decrypted remains theirs (sharing_model.md §10.2 — the UI copy carries
+ * that caveat).
+ */
+export async function revokeGraphAccess(graphId: string, userId: string): Promise<void> {
+	await ensureHydrated();
+	requireMatrixId(graphId);
+	if (!shouldUseMatrix()) {
+		throw new Error('Log in and set up encryption to manage sharing.');
+	}
+	await revokeMatrixGraphAccess(graphId, userId);
 }
 
 export async function listUserGraphMembers(graphId: string): Promise<GraphMember[]> {

@@ -161,17 +161,15 @@
 		<section class="invites">
 			<h2>Pending invites</h2>
 			<p class="muted">
-				Graphs other accounts have invited you to. Accepting joins the room and pulls in any
-				encrypted history they've already shared.
+				Graphs other accounts have invited you to. Invites are unnamed on purpose — the graph's
+				title is encrypted and only appears after you accept. Decide by who sent it.
 			</p>
 			<ul class="invite-list">
 				{#each invites as inv (inv.roomId)}
 					<li>
 						<div>
-							<strong>{inv.roomName ?? inv.roomId}</strong>
-							{#if inv.invitedBy}
-								<span class="muted">— from {inv.invitedBy}</span>
-							{/if}
+							<strong>{inv.invitedBy ?? 'Unknown account'}</strong>
+							<span class="muted">shared an encrypted graph with you</span>
 						</div>
 						<div class="invite-actions">
 							<button

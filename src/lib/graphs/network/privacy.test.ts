@@ -6,6 +6,7 @@ import {
 	isSelfNode,
 	maskedLabels,
 	namedMembers,
+	redactPendingLinks,
 	SELF_MASK
 } from './privacy.js';
 import { polyculeFixture } from '$lib/fixtures.js';
@@ -126,5 +127,41 @@ describe('namedMembers', () => {
 			{ id: 'n2', label: 'Cy', subject_ref: '@cy:example.org', link_status: 'confirmed' }
 		]);
 		expect(namedMembers(g).map((m) => m.unconfirmedLink)).toEqual([true, false]);
+	});
+});
+
+describe('redactPendingLinks', () => {
+	// SECURITY_PLAN.md S10 / sharing_model.md §12: an unconfirmed subject_ref
+	// is an unconsented claim about a real account — a non-owner viewer's
+	// render path must never see it.
+	it('strips subject_ref and link_status from pending and denied links', () => {
+		const g = graphWith([
+			{ id: 'n1', label: 'Alex', subject_ref: '@alex:example.org', link_status: 'pending' },
+			{ id: 'n2', label: 'Bea', subject_ref: '@bea:example.org', link_status: 'denied' }
+		]);
+		const redacted = redactPendingLinks(g);
+		for (const n of redacted.nodes) {
+			expect(n.subject_ref).toBeUndefined();
+			expect(n.link_status).toBeUndefined();
+		}
+	});
+
+	it('keeps confirmed links and untouched nodes intact', () => {
+		const g = graphWith([
+			{ id: 'n1', label: 'Alex', subject_ref: '@alex:example.org', link_status: 'confirmed' },
+			{ id: 'n2', label: 'Bea', is_self: true }
+		]);
+		const redacted = redactPendingLinks(g);
+		expect(redacted.nodes[0].subject_ref).toBe('@alex:example.org');
+		expect(redacted.nodes[1]).toEqual(g.nodes[1]);
+	});
+
+	it('stops a pending link from marking a viewer as self', () => {
+		// Bea views a graph that links her without consent. Before redaction
+		// her node would render "You" — leaking that she's been named.
+		const g = graphWith([
+			{ id: 'n1', label: 'Bea', subject_ref: '@bea:example.org', link_status: 'pending' }
+		]);
+		expect(isSelfNode(redactPendingLinks(g).nodes[0], '@bea:example.org')).toBe(false);
 	});
 });

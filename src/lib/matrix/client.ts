@@ -8,6 +8,7 @@
 // Matrix recovery key, which is a follow-up.
 
 import type { MatrixClient } from 'matrix-js-sdk';
+import { resolveHomeserver } from './homeserver.js';
 import { clearSession, loadSession, saveSession, type MatrixSession } from './session.js';
 import { matrixStore } from './store.svelte.js';
 
@@ -55,15 +56,16 @@ export interface LoginOptions {
 }
 
 export async function login(opts: LoginOptions): Promise<MatrixSession> {
+	const baseUrl = await resolveHomeserver(opts.baseUrl);
 	const sdk = await loadSdk();
-	const tmp = sdk.createClient({ baseUrl: opts.baseUrl });
+	const tmp = sdk.createClient({ baseUrl });
 	const res = await tmp.login('m.login.password', {
 		identifier: { type: 'm.id.user', user: opts.username },
 		password: opts.password,
 		initial_device_display_name: 'queer-curves (web)'
 	});
 	const session: MatrixSession = {
-		baseUrl: opts.baseUrl,
+		baseUrl,
 		userId: res.user_id,
 		accessToken: res.access_token,
 		deviceId: res.device_id
@@ -75,8 +77,9 @@ export async function login(opts: LoginOptions): Promise<MatrixSession> {
 }
 
 export async function register(opts: LoginOptions): Promise<MatrixSession> {
+	const baseUrl = await resolveHomeserver(opts.baseUrl);
 	const sdk = await loadSdk();
-	const tmp = sdk.createClient({ baseUrl: opts.baseUrl });
+	const tmp = sdk.createClient({ baseUrl });
 	// The dummy auth flow is what Synapse exposes when registration is open
 	// (`enable_registration_without_verification: true` in the dev compose).
 	// Production homeservers will require richer auth (recaptcha, terms,
@@ -91,7 +94,7 @@ export async function register(opts: LoginOptions): Promise<MatrixSession> {
 		throw new Error('Registration succeeded but the homeserver did not return a session');
 	}
 	const session: MatrixSession = {
-		baseUrl: opts.baseUrl,
+		baseUrl,
 		userId: res.user_id,
 		accessToken: res.access_token,
 		deviceId: res.device_id
@@ -327,7 +330,7 @@ async function reshareSnapshotIfOurs(roomId: string): Promise<void> {
 	}
 	const marker = room.currentState.getStateEvents(mod.MARKER_EVENT, '');
 	if (!marker) return;
-	const graph = mod.findLatestGraph(room.getLiveTimeline().getEvents());
+	const graph = mod.findLatestGraph(room.getLiveTimeline().getEvents(), mod.roomCreator(room));
 	if (!graph) return;
 	try {
 		await mod.saveMatrixGraph({ ...graph, id: roomId });

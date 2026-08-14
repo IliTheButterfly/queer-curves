@@ -26,7 +26,7 @@ Matrix-backed work needs a homeserver. `scripts/dev-matrix.sh up | down | logs |
 
 ### Headless probes (`scripts/*.mjs`)
 
-Not CI tests — manual playwright-core harnesses that drive a real browser against `pnpm dev` + dev Synapse to exercise flows unit tests can't (crypto, sync, multi-user). Each covers one path: `smoke-test` (login → keys → create → reload), `share-probe` (two-user invite/accept), `multi-device-probe`, `delete-probe`, `network-probe`, `migration-probe`, `restore-error-probe`, `datapoint-probe`, `refresh-probe`, `name-privacy-probe` (the only one needing no homeserver — it drives the polycule fixture). They expect `DEV_URL` (default `http://localhost:5174`) and `HOMESERVER`. Add a probe when a change touches an E2EE or multi-party path; run the relevant one before claiming such a change works.
+Not CI tests — manual playwright-core harnesses that drive a real browser against `pnpm dev` + dev Synapse to exercise flows unit tests can't (crypto, sync, multi-user). Each covers one path: `smoke-test` (login → keys → create → reload), `share-probe` (two-user invite/accept), `multi-device-probe`, `delete-probe`, `revoke-probe` (two-user kick + delete-kicks-members order), `network-probe`, `migration-probe`, `restore-error-probe`, `datapoint-probe`, `refresh-probe`, `name-privacy-probe` (the only one needing no homeserver — it drives the polycule fixture). They expect `DEV_URL` (default `http://localhost:5174`) and `HOMESERVER`. Add a probe when a change touches an E2EE or multi-party path; run the relevant one before claiming such a change works.
 
 ## Architecture
 

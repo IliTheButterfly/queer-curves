@@ -101,6 +101,7 @@ export interface SnapshotScanEvent {
 	getType(): string;
 	getContent(): unknown;
 	isDecryptionFailure(): boolean;
+	getSender(): string | undefined;
 }
 
 function requireClient() {
@@ -128,13 +129,26 @@ async function sendCustomEvent(
  * we'd consider) suppresses the room entirely — null means "deleted or no
  * readable snapshot". Decryption failures are skipped silently so the
  * caller can fall back to whatever earlier snapshot is still decryptable.
+ *
+ * When `ownerId` is known, snapshots and tombstones from anyone else are
+ * ignored. Power levels already stop a viewer sending either — but power
+ * levels are enforced by the *sender's* homeserver on a federated send, so
+ * the reader must not trust them alone (`SECURITY_PLAN.md` S2). If the
+ * room's create event hasn't synced yet, `ownerId` is null and the check is
+ * skipped rather than hiding the graph: server-side authorisation is still
+ * in force, this is defence-in-depth on top of it.
  */
-export function findLatestGraph(events: readonly SnapshotScanEvent[]): Graph | null {
+export function findLatestGraph(
+	events: readonly SnapshotScanEvent[],
+	ownerId?: string | null
+): Graph | null {
 	for (let i = events.length - 1; i >= 0; i--) {
 		const ev = events[i];
 		const type = ev.getType();
+		if (type !== TOMBSTONE_EVENT && type !== SNAPSHOT_EVENT) continue;
+		if (ownerId && ev.getSender() !== ownerId) continue;
 		if (type === TOMBSTONE_EVENT) return null;
-		if (type === SNAPSHOT_EVENT && !ev.isDecryptionFailure()) {
+		if (!ev.isDecryptionFailure()) {
 			const content = ev.getContent() as Partial<Graph> | null;
 			if (content && typeof content === 'object' && content.id) {
 				return content as Graph;
@@ -156,7 +170,7 @@ export async function listMatrixGraphs(): Promise<Graph[]> {
 		// hides freshly-restored rooms from a second device until the next
 		// state push lands.
 		const marker = room.currentState.getStateEvents(MARKER_EVENT, '');
-		const graph = findLatestGraph(room.getLiveTimeline().getEvents());
+		const graph = findLatestGraph(room.getLiveTimeline().getEvents(), roomCreator(room));
 		if (!marker && !graph) continue;
 		if (graph) {
 			out.push({ ...graph, id: room.roomId });
@@ -169,7 +183,7 @@ export async function getMatrixGraph(id: string): Promise<Graph | undefined> {
 	const client = requireClient();
 	const room = client.getRoom(id);
 	if (!room) return undefined;
-	const graph = findLatestGraph(room.getLiveTimeline().getEvents());
+	const graph = findLatestGraph(room.getLiveTimeline().getEvents(), roomCreator(room));
 	if (!graph) return undefined;
 	return { ...graph, id: room.roomId };
 }
@@ -260,11 +274,49 @@ export async function deleteMatrixGraph(id: string): Promise<void> {
 	} catch {
 		// ignore
 	}
+	// Kick every other member BEFORE leaving (`sharing_model.md` §10.3,
+	// SECURITY_PLAN.md S5). Order matters twice over: the tombstone above is
+	// sent while viewers are still joined, so their clients can decrypt it;
+	// and once the owner leaves, nobody with power remains to kick anyone —
+	// viewers would be stranded in an unmoderated room, holding keys, some of
+	// them rendering a graph the owner believes deleted. The kick also makes
+	// the SDK rotate the megolm session, so nothing sent later is readable to
+	// them. Honest caveat: none of this retracts what a viewer already
+	// decrypted (§10.2) — deletion stops the future, not the past.
+	const me = client.getUserId();
+	for (const member of room.currentState.getMembers()) {
+		if (member.userId === me) continue;
+		if (member.membership !== 'join' && member.membership !== 'invite') continue;
+		try {
+			await client.kick(room.roomId, member.userId, 'graph deleted by owner');
+		} catch (e) {
+			console.warn('[qc.matrix] delete: could not kick', member.userId, e);
+		}
+	}
 	try {
 		await client.leave(room.roomId);
 	} catch {
 		// ignore — graph may already be gone server-side
 	}
+}
+
+/**
+ * Hard revocation (`sharing_model.md` §10.2): kick one member out of a graph
+ * room. The homeserver-side effect is immediate (they stop receiving events);
+ * the crypto effect lands on the next send, when the SDK notices the
+ * membership change and rotates the room's megolm session — so everything
+ * published after the kick is unreadable to them. What they already decrypted
+ * stays theirs; the UI copy must say so rather than implying otherwise.
+ *
+ * Soft revocation (§10.1) has no code path on purpose: it is "stop updating
+ * the graph", which is the absence of sends, not an API call.
+ */
+export async function revokeMatrixGraphAccess(graphId: string, userId: string): Promise<void> {
+	const client = requireClient();
+	if (userId === client.getUserId()) {
+		throw new Error("You can't revoke your own access — delete the graph instead.");
+	}
+	await client.kick(graphId, userId, 'access revoked by owner');
 }
 
 export interface GraphMember {
@@ -285,6 +337,21 @@ export function matrixGraphCreator(id: string): string | null {
 	const client = requireClient();
 	const room = client.getRoom(id);
 	if (!room) return null;
+	return roomCreator(room);
+}
+
+/** Same lookup, for callers that already hold the room object. */
+export function roomCreator(room: {
+	currentState: {
+		getStateEvents(
+			type: string,
+			key: string
+		):
+			| { getContent(): unknown; getSender(): string | undefined }
+			| { getContent(): unknown; getSender(): string | undefined }[]
+			| null;
+	};
+}): string | null {
 	const create = room.currentState.getStateEvents('m.room.create', '');
 	if (!create) return null;
 	const ev = Array.isArray(create) ? create[0] : create;
@@ -326,11 +393,46 @@ export async function inviteToMatrixGraph(graphId: string, userId: string): Prom
 	await client.invite(graphId, trimmed);
 }
 
-/** Pending invites to OUR rooms — graphs other users invited this account to. */
+/**
+ * Pending invites to OUR rooms — graphs other users invited this account to.
+ * There is deliberately no room name here: graph rooms don't have one
+ * (SECURITY_PLAN.md S1), and anything that does have one is filtered out
+ * before it reaches this list. The inviter is the only identity the user
+ * has to decide on.
+ */
 export interface PendingInvite {
 	roomId: string;
-	roomName: string | null;
 	invitedBy: string | null;
+}
+
+/**
+ * What we can tell about an invited room before joining it. Invited users
+ * only receive stripped state (create, join_rules, name, avatar, encryption,
+ * the two members) — never our custom marker — so this is the whole basis
+ * for pre-join filtering.
+ */
+export interface StrippedInviteSummary {
+	hasName: boolean;
+	isEncrypted: boolean;
+	/** null when join_rules didn't arrive in the stripped state. */
+	joinRule: string | null;
+}
+
+/**
+ * Pre-join plausibility filter for invites (`SECURITY_PLAN.md` S8). Graph
+ * rooms are E2EE from creation, carry no `m.room.name` (S1), and are
+ * invite-only — so anything named, unencrypted, or joinable without an
+ * invite is not one of ours and doesn't belong in the graph list, where a
+ * crafted invite could otherwise phish an accept (T15). A missing
+ * join_rules event is tolerated (stripped state isn't guaranteed complete);
+ * a missing encryption event is not, because joining an unencrypted room is
+ * the failure mode this filter exists to prevent.
+ */
+export function isPlausibleGraphInvite(s: StrippedInviteSummary): boolean {
+	if (s.hasName) return false;
+	if (!s.isEncrypted) return false;
+	if (s.joinRule !== null && s.joinRule !== 'invite') return false;
+	return true;
 }
 
 export async function listPendingMatrixInvites(): Promise<PendingInvite[]> {
@@ -341,24 +443,59 @@ export async function listPendingMatrixInvites(): Promise<PendingInvite[]> {
 	for (const room of client.getRooms()) {
 		const me = room.getMember(userId);
 		if (!me || me.membership !== 'invite') continue;
-		// We can't filter invites by the `app.queercurves.marker` state
-		// event the way we filter joined rooms — invited users only receive
-		// the room's "stripped state" (m.room.name, m.room.member for the
-		// two participants, m.room.join_rules, m.room.avatar). Custom state
-		// events aren't included until they actually join. Show every
-		// pending invite and trust the user to decline anything unexpected.
+		const nameEv = room.currentState.getStateEvents('m.room.name', '');
+		const name = nameEv
+			? ((Array.isArray(nameEv) ? nameEv[0] : nameEv)?.getContent() as { name?: string })?.name
+			: undefined;
+		const joinRulesEv = room.currentState.getStateEvents('m.room.join_rules', '');
+		const joinRule = joinRulesEv
+			? ((
+					(Array.isArray(joinRulesEv) ? joinRulesEv[0] : joinRulesEv)?.getContent() as {
+						join_rule?: string;
+					}
+				)?.join_rule ?? null)
+			: null;
+		if (
+			!isPlausibleGraphInvite({
+				hasName: Boolean(name),
+				isEncrypted: room.hasEncryptionStateEvent(),
+				joinRule
+			})
+		) {
+			continue;
+		}
 		out.push({
 			roomId: room.roomId,
-			roomName: room.name ?? null,
 			invitedBy: me.events.member?.getSender() ?? null
 		});
 	}
 	return out;
 }
 
+/**
+ * Join an invited room, then verify it actually is a graph room. The
+ * `app.queercurves.marker` state event is only visible post-join, so this is
+ * the second half of the S8 filter: if no marker shows up within the
+ * timeout, leave again and tell the user — never leave the account joined to
+ * an arbitrary room something invited it to.
+ */
 export async function acceptMatrixInvite(roomId: string): Promise<void> {
 	const client = requireClient();
 	await client.joinRoom(roomId);
+	const deadline = Date.now() + 15000;
+	while (Date.now() < deadline) {
+		const room = client.getRoom(roomId);
+		if (room?.currentState.getStateEvents(MARKER_EVENT, '')) return;
+		await new Promise((resolve) => setTimeout(resolve, 250));
+	}
+	try {
+		await client.leave(roomId);
+	} catch {
+		// leaving is best-effort; the error below is the part that matters
+	}
+	throw new Error(
+		"That invite wasn't a queer-curves graph, so it was declined. If someone did share a graph with you, ask them to re-invite you."
+	);
 }
 
 export async function declineMatrixInvite(roomId: string): Promise<void> {

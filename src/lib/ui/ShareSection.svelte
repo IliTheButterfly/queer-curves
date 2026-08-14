@@ -1,5 +1,10 @@
 <script lang="ts">
-	import { inviteToUserGraph, listUserGraphMembers, type GraphMember } from '$lib/store/graphs.js';
+	import {
+		inviteToUserGraph,
+		listUserGraphMembers,
+		revokeGraphAccess,
+		type GraphMember
+	} from '$lib/store/graphs.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 
 	let { graphId }: { graphId: string } = $props();
@@ -9,6 +14,10 @@
 	let submitting = $state(false);
 	let inviteError = $state<string | null>(null);
 	let inviteSuccess = $state<string | null>(null);
+	let revoking = $state<string | null>(null);
+	let revokeError = $state<string | null>(null);
+
+	const selfUserId = $derived(matrixStore.session?.userId ?? null);
 
 	// Only Matrix-backed graphs can be shared — the dispatcher will throw
 	// for localStorage ids. Surface that as a disabled state so the user
@@ -52,6 +61,29 @@
 		}
 	}
 
+	async function handleRevoke(userId: string) {
+		if (revoking) return;
+		// Distinct verb, honest caveat (THREATS.md §7 rules 4 and 13): a
+		// revoke stops the future, it cannot retract the past.
+		if (
+			!confirm(
+				`Remove ${userId} from this graph?\n\nThey'll stop seeing any future changes. Anything they've already seen stays on their device — removing them can't take that back.`
+			)
+		) {
+			return;
+		}
+		revokeError = null;
+		revoking = userId;
+		try {
+			await revokeGraphAccess(graphId, userId);
+			members = await listUserGraphMembers(graphId);
+		} catch (e) {
+			revokeError = e instanceof Error ? e.message : String(e);
+		} finally {
+			revoking = null;
+		}
+	}
+
 	function labelFor(membership: string): string {
 		switch (membership) {
 			case 'join':
@@ -76,6 +108,14 @@
 			before inviting anyone.
 		</p>
 	{:else}
+		<!-- Honest disclosure (SECURITY_PLAN.md S4 interim): in the v1
+		     protocol every viewer receives the whole graph, history included.
+		     Until per-grant projections exist, saying anything softer would
+		     be lying about what an invite grants. -->
+		<p class="muted">
+			Inviting someone shares this graph <strong>including its full history</strong> — every datapoint
+			and entry ever recorded, not just the current state.
+		</p>
 		<form onsubmit={handleInvite}>
 			<label class="field">
 				<span class="label">Matrix user id</span>
@@ -107,9 +147,26 @@
 					<li>
 						<span class="user-id">{m.userId}</span>
 						<span class="role">{labelFor(m.membership)}</span>
+						{#if m.userId !== selfUserId && (m.membership === 'join' || m.membership === 'invite')}
+							<button
+								type="button"
+								class="revoke"
+								onclick={() => handleRevoke(m.userId)}
+								disabled={revoking !== null}
+							>
+								{revoking === m.userId ? 'Removing…' : 'Remove'}
+							</button>
+						{/if}
 					</li>
 				{/each}
 			</ul>
+			{#if revokeError}
+				<p class="error" role="alert">{revokeError}</p>
+			{/if}
+			<p class="muted small">
+				Removing someone stops them from seeing future changes. It can't take back what they've
+				already seen. To simply pause sharing, stop updating the graph instead.
+			</p>
 		{/if}
 	{/if}
 </section>
@@ -214,5 +271,28 @@
 	.role {
 		color: var(--color-muted);
 		font-size: 0.85em;
+		margin-left: auto;
+	}
+	.small {
+		font-size: 0.85em;
+		margin: var(--space-2) 0 0;
+	}
+	button.revoke {
+		background: transparent;
+		border: 1px solid rgba(255, 100, 100, 0.35);
+		color: rgba(255, 160, 160, 1);
+		padding: 2px var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+		font-size: 0.85em;
+		cursor: pointer;
+		margin-left: var(--space-2);
+	}
+	button.revoke:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	button.revoke:not(:disabled):hover {
+		background: rgba(255, 100, 100, 0.1);
 	}
 </style>
