@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GraphImportError, parseGraphJson } from './io.js';
-import { acefluxFixture, polyculeFixture, pronounCardFixture } from '../fixtures.js';
+import { acefluxFixture, drinksFixture, polyculeFixture, pronounCardFixture } from '../fixtures.js';
 import { SCHEMA_VERSION } from '../types.js';
 
 describe('parseGraphJson', () => {
@@ -83,6 +83,44 @@ describe('parseGraphJson', () => {
 		expect(() => parseGraphJson(JSON.stringify({ ...polyculeFixture, edges: undefined }))).toThrow(
 			/nodes|edges/
 		);
+	});
+
+	it('round-trips an occurrence graph', () => {
+		const parsed = parseGraphJson(JSON.stringify(drinksFixture));
+		expect(parsed.id).toBe(drinksFixture.id);
+		expect(parsed.type).toBe('occurrence');
+	});
+
+	it('rejects an occurrence graph missing counters', () => {
+		const g = { ...drinksFixture, schema: { ...drinksFixture.schema, counters: undefined } };
+		expect(() => parseGraphJson(JSON.stringify(g))).toThrow(/counters/);
+	});
+
+	it('rejects an occurrence graph missing occurrences', () => {
+		const g = { ...drinksFixture, occurrences: undefined };
+		expect(() => parseGraphJson(JSON.stringify(g))).toThrow(/occurrences/);
+	});
+
+	it('rejects an occurrence pointing at a counter that does not exist', () => {
+		// An orphaned entry disappears from every total the app computes, so
+		// it must fail loudly at the import boundary rather than quietly.
+		const g = {
+			...drinksFixture,
+			occurrences: [
+				{ id: 'oc-x', counter_id: 'nicotine', timestamp: '2026-05-01T10:00:00Z', amount: 1 }
+			]
+		};
+		expect(() => parseGraphJson(JSON.stringify(g))).toThrow(/unknown counter/);
+	});
+
+	it('rejects an occurrence with a non-numeric amount', () => {
+		const g = {
+			...drinksFixture,
+			occurrences: [
+				{ id: 'oc-x', counter_id: 'alcohol', timestamp: '2026-05-01T10:00:00Z', amount: 'two' }
+			]
+		};
+		expect(() => parseGraphJson(JSON.stringify(g))).toThrow(/amount/);
 	});
 
 	it('rejects a pronoun graph with an empty scale', () => {

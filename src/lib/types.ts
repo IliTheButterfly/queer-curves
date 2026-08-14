@@ -4,11 +4,14 @@
 // SCHEMA_VERSION (and update data_model.md §9) so older clients fail safe
 // rather than misrender unfamiliar shapes.
 
-// v2 adds the `pronouns` graph family (data_model.md §5). Graphs of the
-// older families are shape-identical to v1, but the version gate is
-// deliberately conservative: a v1 client must refuse a v2 export rather
-// than guess at a `type` it has never heard of.
-export const SCHEMA_VERSION = 2;
+// v2 adds the `pronouns` graph family (data_model.md §5) and v3 the
+// `occurrence` family (§4A). Graphs of the older families are shape-identical
+// to v1, but the version gate is deliberately conservative: a client must
+// refuse a newer export rather than guess at a `type` it has never heard of.
+// Two families landing independently is exactly why the bump is per-release
+// and not per-family — a v2 client knows `pronouns` and would otherwise
+// accept an `occurrence` graph it cannot render.
+export const SCHEMA_VERSION = 3;
 
 // A Matrix user reference, in canonical "@user:server" form.
 export type UserRef = string;
@@ -17,7 +20,7 @@ export type UserRef = string;
 // render in local zone (data_model.md §3.5).
 export type Timestamp = string;
 
-export type GraphType = 'spectrum' | 'network' | 'pronouns';
+export type GraphType = 'spectrum' | 'network' | 'occurrence' | 'pronouns';
 
 // ─── Customization ──────────────────────────────────────────────────────────
 
@@ -102,6 +105,24 @@ export interface SpectrumView {
 }
 
 export type LegendPosition = 'top' | 'bottom' | 'left' | 'right' | 'hidden';
+
+// ─── Occurrence customization ───────────────────────────────────────────────
+
+export interface OccurrenceCustomization extends BaseCustomization {
+	bar_style?: {
+		// Bars are stacked per counter by default; 'grouped' puts one bar per
+		// counter side by side inside each bucket.
+		mode?: 'stacked' | 'grouped';
+		// Rolling mean drawn as a line over the bars, in buckets. 0 / unset
+		// hides it.
+		rolling_window?: number;
+	};
+	legend?: {
+		position: LegendPosition;
+	};
+	// Draw each counter's target as a dashed reference line on the chart.
+	show_targets?: boolean;
+}
 
 export interface NetworkCustomization extends BaseCustomization {
 	node_style?: {
@@ -255,6 +276,94 @@ export interface NetworkGraph extends BaseGraph {
 	edges: NetworkEdge[];
 }
 
+// ─── Occurrence graphs ──────────────────────────────────────────────────────
+//
+// Counting, not positioning: an occurrence graph records *that a thing
+// happened*, how much of it, and when. Drinks, cigarettes, doses, panic
+// attacks, gym sessions, misgenderings. See data_model.md §4A.
+
+// The period occurrences roll up into for charting and target comparison.
+export type OccurrenceBucket = 'hour' | 'day' | 'week' | 'month' | 'year';
+
+// The period a counter's headline number covers — "23 this week". Modelled on
+// BetterCounter's per-counter "interval to display": the right period is a
+// property of the thing being counted (cigarettes read daily, therapy
+// sessions monthly), not a view setting shared by every counter in the graph.
+// 'lifetime' means every entry ever, with no period boundary.
+export type CounterInterval = 'day' | 'week' | 'month' | 'year' | 'lifetime';
+
+// What a target asks of you. 'at_most' is a limit (drinks per week);
+// 'at_least' is a goal (gym sessions per week). Both are advisory — the app
+// never blocks an entry, it only reports.
+export type TargetDirection = 'at_most' | 'at_least';
+
+export interface CounterTarget {
+	amount: number;
+	period: OccurrenceBucket;
+	direction: TargetDirection;
+}
+
+// A one-tap entry. Counting apps live and die on these: "+1 pint" is the
+// only interaction most users ever perform, so the amounts they'd otherwise
+// type are stored on the counter itself.
+export interface CounterPreset {
+	id: string;
+	label: string;
+	// In the counter's unit — a pint is 2.3 UK units, a single is 1.
+	amount: number;
+}
+
+export interface Counter {
+	id: string;
+	label: string;
+	// Names what `amount` measures: "units", "cigarettes", "mg", "£". Kept
+	// free-form deliberately — the model does no unit conversion.
+	unit: string;
+	color?: string;
+	// Amount used by a bare "+1" tap when no preset is chosen. Defaults to 1.
+	step?: number;
+	presets?: CounterPreset[];
+	target?: CounterTarget;
+	// Period the counter's headline number covers. Defaults to 'day'.
+	interval?: CounterInterval;
+}
+
+export interface Occurrence {
+	id: string;
+	counter_id: string;
+	// When it happened — backdatable, since you log the drink after the
+	// drink. UTC, like every other timestamp (§3.4).
+	timestamp: Timestamp;
+	// In the counter's unit. Always explicit, even for pure "did it happen"
+	// counters, where it is 1.
+	amount: number;
+	notes?: string;
+	tags?: string[];
+}
+
+export interface OccurrenceSchema {
+	counters: Counter[];
+	// Bucket the chart opens on. Defaults to 'day'.
+	default_bucket?: OccurrenceBucket;
+	// Average-window policy for the "avg per period" figures: 'first_to_now'
+	// divides by the span from the first entry to now (so a counter you
+	// abandoned keeps diluting), 'first_to_last' divides by first-to-last
+	// entry (so it reports the rate while you were actually logging).
+	// Defaults to 'first_to_now'.
+	average_mode?: 'first_to_now' | 'first_to_last';
+	// Local hour (0–23) at which a new day begins for bucketing purposes.
+	// 4 means a 2am drink counts toward the night before — the thing every
+	// drink tracker gets asked for. Defaults to 0.
+	day_start_hour?: number;
+}
+
+export interface OccurrenceGraph extends BaseGraph {
+	type: 'occurrence';
+	schema: OccurrenceSchema;
+	customization: OccurrenceCustomization;
+	occurrences: Occurrence[];
+}
+
 // ─── Pronoun graphs ─────────────────────────────────────────────────────────
 
 export interface PronounsCustomization extends BaseCustomization {
@@ -352,7 +461,7 @@ export interface PronounsGraph extends BaseGraph {
 
 // ─── Discriminated union ────────────────────────────────────────────────────
 
-export type Graph = SpectrumGraph | NetworkGraph | PronounsGraph;
+export type Graph = SpectrumGraph | NetworkGraph | OccurrenceGraph | PronounsGraph;
 
 // ─── Type guards ────────────────────────────────────────────────────────────
 
@@ -362,6 +471,10 @@ export function isSpectrum(graph: Graph): graph is SpectrumGraph {
 
 export function isNetwork(graph: Graph): graph is NetworkGraph {
 	return graph.type === 'network';
+}
+
+export function isOccurrence(graph: Graph): graph is OccurrenceGraph {
+	return graph.type === 'occurrence';
 }
 
 export function isPronouns(graph: Graph): graph is PronounsGraph {

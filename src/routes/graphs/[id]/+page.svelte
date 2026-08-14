@@ -3,6 +3,11 @@
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 	import { activeViews } from '$lib/graphs/spectrum/views.js';
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
+	import OccurrenceChart from '$lib/graphs/occurrence/OccurrenceChart.svelte';
+	import { defaultBucketOf } from '$lib/graphs/occurrence/aggregate.js';
+	import OccurrenceCounters from '$lib/ui/OccurrenceCounters.svelte';
+	import OccurrenceForm from '$lib/ui/OccurrenceForm.svelte';
+	import OccurrenceHistory from '$lib/ui/OccurrenceHistory.svelte';
 	import PronounCard from '$lib/graphs/pronouns/PronounCard.svelte';
 	import GraphStats from '$lib/ui/GraphStats.svelte';
 	import SpectrumDatapointForm from '$lib/ui/SpectrumDatapointForm.svelte';
@@ -28,6 +33,9 @@
 		NetworkEdge,
 		NetworkGraph,
 		NetworkNode,
+		Occurrence,
+		OccurrenceBucket,
+		OccurrenceGraph,
 		PronounSet,
 		PronounsGraph,
 		SpectrumDatapoint,
@@ -92,6 +100,16 @@
 	let selectedViewId = $state<string | null>(null);
 	const activeView = $derived(
 		spectrumViews.find((v) => v.id === selectedViewId) ?? spectrumViews[0]
+	);
+
+	// Bucket selector state — occurrence graphs only. Starts unset so the
+	// graph's own configured default wins until the user picks otherwise.
+	let selectedBucket = $state<OccurrenceBucket | null>(null);
+	// Survive the invalidateAll() that follows each add.
+	let manualEntryOpen = $state(false);
+	let historyOpen = $state(false);
+	const activeBucket = $derived(
+		graph?.type === 'occurrence' ? (selectedBucket ?? defaultBucketOf(graph)) : 'day'
 	);
 
 	async function persist(updated: Graph) {
@@ -204,6 +222,33 @@
 				return p ? { ...n, position: { x: p.x, y: p.y } } : n;
 			})
 		} satisfies NetworkGraph);
+	}
+
+	async function handleAddOccurrence(o: Occurrence) {
+		if (!graph || graph.type !== 'occurrence') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			occurrences: [...graph.occurrences, o]
+		} satisfies OccurrenceGraph);
+	}
+
+	async function handleRemoveOccurrence(id: string) {
+		if (!graph || graph.type !== 'occurrence') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			occurrences: graph.occurrences.filter((o) => o.id !== id)
+		} satisfies OccurrenceGraph);
+	}
+
+	async function handleEditOccurrence(updated: Occurrence) {
+		if (!graph || graph.type !== 'occurrence') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			occurrences: graph.occurrences.map((o) => (o.id === updated.id ? updated : o))
+		} satisfies OccurrenceGraph);
 	}
 
 	async function handleAddPronounSet(set: PronounSet) {
@@ -342,6 +387,10 @@
 		<p class="meta">
 			{#if graph.type === 'spectrum'}
 				{graph.schema.dimensions}D spectrum · {pluralize(graph.datapoints.length, 'datapoint')}
+			{:else if graph.type === 'occurrence'}
+				occurrence · {pluralize(graph.schema.counters.length, 'counter')} ·
+				{graph.occurrences.length}
+				{graph.occurrences.length === 1 ? 'entry' : 'entries'}
 			{:else if graph.type === 'network'}
 				network · {pluralize(graph.nodes.length, 'node')} · {pluralize(graph.edges.length, 'edge')}
 			{:else}
@@ -371,9 +420,44 @@
 			</div>
 		{/if}
 
+		<!-- The counter list is the page for an occurrence graph, the way it is
+		     the whole screen in BetterCounter: the reason to open one is almost
+		     always to add to it, and the chart is what you look at afterwards.
+		     Read-only viewers get the same rows without the ± controls. -->
+		{#if graph.type === 'occurrence'}
+			<div class="counters-slot">
+				<OccurrenceCounters
+					{graph}
+					onadd={handleAddOccurrence}
+					onremove={isEditable ? handleRemoveOccurrence : undefined}
+				/>
+			</div>
+		{/if}
+
+		{#if graph.type === 'occurrence'}
+			<div class="view-selector">
+				<label>
+					<span class="muted">Roll up by:</span>
+					<select
+						value={activeBucket}
+						onchange={(e) =>
+							(selectedBucket = (e.currentTarget as HTMLSelectElement).value as OccurrenceBucket)}
+					>
+						<option value="hour">hour</option>
+						<option value="day">day</option>
+						<option value="week">week</option>
+						<option value="month">month</option>
+						<option value="year">year</option>
+					</select>
+				</label>
+			</div>
+		{/if}
+
 		<div class="chart">
 			{#if graph.type === 'spectrum'}
 				<SpectrumHistoryChart {graph} view={activeView} />
+			{:else if graph.type === 'occurrence'}
+				<OccurrenceChart {graph} bucket={activeBucket} />
 			{:else if graph.type === 'network'}
 				<div class="network-wrap" class:revealed={revealNames}>
 					<NetworkChart
@@ -424,6 +508,21 @@
 
 		<GraphStats {graph} />
 
+		<!-- History exists to correct and delete individual entries, not to be
+		     read, so it stays folded away. Shared-with-you graphs get it
+		     read-only rather than not at all. -->
+		{#if graph.type === 'occurrence' && graph.occurrences.length > 0}
+			<details class="folded" bind:open={historyOpen}>
+				<summary>Every entry ({graph.occurrences.length})</summary>
+				<OccurrenceHistory
+					{graph}
+					editable={isEditable}
+					onremove={handleRemoveOccurrence}
+					onedit={handleEditOccurrence}
+				/>
+			</details>
+		{/if}
+
 		{#if isEditable}
 			<section class="editors">
 				{#if graph.type === 'spectrum'}
@@ -436,6 +535,16 @@
 						onremove={handleRemoveDatapoint}
 						onedit={handleEditDatapoint}
 					/>
+				{:else if graph.type === 'occurrence'}
+					<!-- Backdating, amounts and notes are the exception, not the
+					     norm, so the full form stays folded away instead of
+					     dominating the page. `open` is bound to page state because
+					     each add triggers invalidateAll(), which would otherwise snap
+					     the disclosure shut between two backdated entries. -->
+					<details class="folded" bind:open={manualEntryOpen}>
+						<summary>Add an entry for another time</summary>
+						<OccurrenceForm {graph} onsubmit={handleAddOccurrence} />
+					</details>
 				{:else if graph.type === 'network'}
 					<NetworkNodeForm {graph} onsubmit={handleAddNode} />
 					<NetworkNodeList {graph} onremove={handleRemoveNode} onedit={handleEditNode} />
@@ -552,6 +661,24 @@
 		padding: var(--space-1) var(--space-2);
 		border-radius: 4px;
 		font: inherit;
+	}
+	.counters-slot {
+		margin-top: var(--space-3);
+	}
+	.folded {
+		margin-top: var(--space-3);
+	}
+	.folded summary {
+		cursor: pointer;
+		color: var(--color-muted);
+		font-size: 0.9em;
+		padding: var(--space-1) 0;
+	}
+	.folded summary:hover {
+		color: var(--color-accent);
+	}
+	.folded[open] summary {
+		margin-bottom: var(--space-2);
 	}
 	.chart {
 		margin-top: var(--space-3);

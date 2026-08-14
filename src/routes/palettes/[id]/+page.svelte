@@ -3,6 +3,7 @@
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
+	import OccurrenceChart from '$lib/graphs/occurrence/OccurrenceChart.svelte';
 	import PronounCard from '$lib/graphs/pronouns/PronounCard.svelte';
 	import type { PageData } from './$types';
 
@@ -84,6 +85,8 @@
 			<div class="chart">
 				{#if graph.type === 'spectrum'}
 					<SpectrumHistoryChart {graph} />
+				{:else if graph.type === 'occurrence'}
+					<OccurrenceChart {graph} />
 				{:else if graph.type === 'network'}
 					<NetworkChart {graph} />
 				{:else}

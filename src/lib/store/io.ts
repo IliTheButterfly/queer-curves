@@ -64,7 +64,12 @@ function validate(value: unknown): asserts value is Graph {
 
 	if (typeof obj.id !== 'string') throw new GraphImportError('Missing or invalid `id`.');
 	if (typeof obj.name !== 'string') throw new GraphImportError('Missing or invalid `name`.');
-	if (obj.type !== 'spectrum' && obj.type !== 'network' && obj.type !== 'pronouns') {
+	if (
+		obj.type !== 'spectrum' &&
+		obj.type !== 'network' &&
+		obj.type !== 'occurrence' &&
+		obj.type !== 'pronouns'
+	) {
 		throw new GraphImportError(`Invalid \`type\`: ${JSON.stringify(obj.type)}.`);
 	}
 
@@ -91,6 +96,34 @@ function validate(value: unknown): asserts value is Graph {
 		}
 		if (!Array.isArray(obj.datapoints)) {
 			throw new GraphImportError('Spectrum graph missing `datapoints`.');
+		}
+	} else if (obj.type === 'occurrence') {
+		const schema = obj.schema as Record<string, unknown>;
+		if (!Array.isArray(schema.counters)) {
+			throw new GraphImportError('Occurrence graph missing `schema.counters`.');
+		}
+		if (!Array.isArray(obj.occurrences)) {
+			throw new GraphImportError('Occurrence graph missing `occurrences`.');
+		}
+		// Every entry must name a counter that exists, or its amount silently
+		// disappears from every total the app computes.
+		const counterIds = new Set(
+			(schema.counters as Record<string, unknown>[])
+				.map((c) => c?.id)
+				.filter((id) => id !== undefined)
+		);
+		for (const raw of obj.occurrences as Record<string, unknown>[]) {
+			if (!raw || typeof raw.counter_id !== 'string' || typeof raw.timestamp !== 'string') {
+				throw new GraphImportError('An occurrence is missing `counter_id` or `timestamp`.');
+			}
+			if (typeof raw.amount !== 'number' || !Number.isFinite(raw.amount)) {
+				throw new GraphImportError(`Occurrence ${String(raw.id)} has a non-numeric \`amount\`.`);
+			}
+			if (!counterIds.has(raw.counter_id)) {
+				throw new GraphImportError(
+					`Occurrence ${String(raw.id)} references unknown counter "${raw.counter_id}".`
+				);
+			}
 		}
 	} else if (obj.type === 'network') {
 		const schema = obj.schema as Record<string, unknown>;

@@ -21,9 +21,10 @@ The graph families currently supported are derived from canonical use cases the 
 |---|---|---|
 | Spectrum | Identity in an N-dimensional coordinate space, tracked over time | aceflux (1D), genderfluid (2D) |
 | Network | Relational data (people and typed connections) | polycule |
+| Occurrence | Discrete events counted over time, with optional per-period targets | alcohol units, cigarettes, doses |
 | Pronouns | Categorical preferences over pronouns and identity/address words | pronoun card |
 
-Spectrum and network were sufficient for v1; the pronoun card arrived in `schema_version = 2` (§5). Adding further families is expected — the model leaves room.
+Spectrum and network were sufficient for v1; the pronoun card arrived in `schema_version = 2` (§5) and occurrence graphs in `schema_version = 3` (§4A). Adding further families is expected — the model leaves room.
 
 ## 2. Common Graph fields
 
@@ -32,12 +33,12 @@ Every Graph, regardless of type, carries:
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | stable identifier; in Matrix encoding this is the room id |
-| `type` | `"spectrum"` \| `"network"` \| `"pronouns"` | extensible |
+| `type` | `"spectrum"` \| `"network"` \| `"occurrence"` \| `"pronouns"` | extensible |
 | `name` | string | user-set, e.g. "my gender" |
 | `description` | string | user-set, optional |
 | `created_at` | timestamp | |
 | `modified_at` | timestamp | last schema change |
-| `schema_version` | int | for forward-compat (see §8) |
+| `schema_version` | int | for forward-compat (see §9) |
 | `owner` | user reference | only the owner can change schema |
 | `editors` | list of user references | can append datapoints; cannot change schema |
 | `customization` | object | see §6 |
@@ -191,9 +192,112 @@ Per-viewer legend redaction (the case where some viewers see "sexual" labels and
 
 For v1, network graphs store a **current state only** — list of nodes, edges, edge types. Historical replay (a timeline of "Alex joined the polycule on date X, Bob's edge to Carol changed to type Y on date Z") is deferred to v2; the protocol leaves room (every mutation could be its own event) but the v1 client will treat the network as point-in-time.
 
+## 4A. Occurrence graphs
+
+An occurrence graph counts discrete events over time: alcohol units, cigarettes, doses, panic attacks, gym sessions, misgenderings, migraines. Where a spectrum graph answers *where am I*, an occurrence graph answers *how much, how often, and when did I last*.
+
+(Numbered `4A` rather than `5` because the pronoun family (§5) claimed the next integer while this section was being written on a parallel branch. Renumbering it now would shift §5–§13 and invalidate cross-references in the code and the other design docs, which is a worse trade than a lettered section.)
+
+The design is taken from what dedicated counting apps converged on: one-tap entry above all else, per-unit presets so the tap records a real quantity, roll-ups into days/weeks/months rather than a continuous line, and an optional target that reports rather than nags.
+
+### 4A.1 Counters
+
+A graph defines one or more **counters** — the distinct things being counted. Counters are the occurrence-graph analogue of axes.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | stable |
+| `label` | string | user-set, e.g. "alcohol", "coffee" |
+| `unit` | string | free-form; names what `amount` measures ("units", "cigarettes", "mg", "£", "cups") |
+| `color` | string | optional; clients fall back to a palette cycle by counter index |
+| `step` | number | amount recorded by a bare one-tap add; defaults to `1` |
+| `presets` | list of `{id, label, amount}` | optional one-tap quantities, e.g. `pint` = 2.3 units |
+| `target` | `{amount, period, direction}` | optional; see §4A.4 |
+| `interval` | `"day"` \| `"week"` \| `"month"` \| `"year"` \| `"lifetime"` | period the headline number covers; default `day` (§4A.6) |
+
+**Units are never converted.** The model stores whatever the user thinks in; two counters with different units are never summed together (clients must subtotal per counter, not across them).
+
+**A counter with logged occurrences cannot be deleted.** Removing it would orphan those entries — they would vanish from every total while still occupying space in the snapshot. Clients must block the deletion until the entries are gone.
+
+### 4A.2 Occurrences
+
+An occurrence is one logged event.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | stable; lets us correct/redact a single entry |
+| `counter_id` | string | must reference a counter in the same graph's schema |
+| `timestamp` | timestamp | when it happened — backdatable, since people log the drink *after* the drink. UTC (§3.5) |
+| `amount` | number | in the counter's unit. Always explicit, `1` for pure "did it happen" counters |
+| `notes` | string | optional |
+| `tags` | string[] | optional, e.g. "party", "stressed", "post-therapy" |
+
+Correction and deletion follow §3.5 exactly: a fresh event supersedes, a redaction removes, and compliant clients wipe rather than hide.
+
+### 4A.3 Buckets and the day boundary
+
+Occurrences roll up into **buckets** for charting and target comparison: `hour`, `day`, `week` (Monday-start), `month`, or `year`. `schema.default_bucket` sets which the chart opens on (default `day`).
+
+**`schema.day_start_hour`** (0–23, default 0) shifts the local day boundary. With `day_start_hour = 4`, a 2am drink counts toward the night before. This exists because it is the single most-requested behaviour in drink trackers, and because a calendar-midnight boundary splits one evening into two days and makes both the daily totals and any streak wrong.
+
+Bucketing is **local-time**, always, even though timestamps are stored UTC — people count in their own days. Weeks and months inherit the same hour shift (a week starts Monday at `day_start_hour`; a month starts the 1st at `day_start_hour`).
+
+Bucket series are **dense**: every bucket between the first occurrence and now exists, including the empty ones. A gap in a drinks chart is information and must be drawn, not skipped.
+
+Charts show a **trailing window** over that dense series (default 45 days / 26 weeks / 12 months), because a year of daily bars is unreadable. Statistics still run over the whole series. When the trailing window happens to be entirely empty — a graph nobody has logged to in months — it slides back to end at the last bucket with data, and the chart **must say so** ("nothing logged since …"). An x axis that stops in May while today is August, with no such label, reads as "up to now" and is a lie.
+
+### 4A.4 Targets
+
+A counter may carry one target:
+
+| Field | Type | Notes |
+|---|---|---|
+| `amount` | number | in the counter's unit |
+| `period` | `"day"` \| `"week"` \| `"month"` | the bucket the target is measured over |
+| `direction` | `"at_most"` \| `"at_least"` | a limit (drinks per week) vs. a goal (gym sessions per week) |
+
+Targets are **advisory**. The app never blocks or warns off an entry; it reports the current period's total against the target and leaves the judgement to the user. This is a deliberate stance: the tool is for people tracking things about themselves, and a counter that scolds gets abandoned or lied to, which destroys the data it exists to collect.
+
+**Streaks count completed periods only.** The period you are still living in has not yet kept its limit, so including it would reset every streak at midnight and then un-reset it. Clients report the current period's running total separately from the streak.
+
+**A target line is only drawn when its `period` matches the chart's bucket.** A weekly limit drawn across daily bars reads as a daily limit, which misleads in the most harmful direction available.
+
+### 4A.5 Occurrence history rendering
+
+Bars, not lines: occurrences are discrete counts inside a period, and a line between two buckets implies in-between values that never existed. Multiple counters stack within a bucket by default, or sit side by side (`bar_style.mode`). An optional rolling mean over N buckets (`bar_style.rolling_window`) gives the trend, which is what distinguishes a bad week from a bad direction.
+
+Bar width is capped, so a graph with one or two buckets shows a bar rather than a filled half-chart.
+
+### 4A.6 Per-counter intervals
+
+Each counter carries its own `interval` — the period its headline number covers — one of `day`, `week`, `month`, `year`, `lifetime` (default `day`). The right period is a property of the thing counted, not a view setting shared by the whole graph: cigarettes are read daily, alcohol units weekly (every public-health guideline states them per week), therapy sessions monthly. A single graph-wide selector would force one of those to be wrong.
+
+A chart subdivides an interval one step finer, so the headline number and the bars describe the same period: `day` → hourly bars, `week`/`month` → daily, `year` → monthly, `lifetime` → monthly.
+
+`schema.average_mode` selects how the rate figure is computed: `first_to_now` (default) divides the total by the span from the first entry to now, so a counter you abandoned keeps diluting; `first_to_last` divides by first-entry-to-last-entry, reporting the rate while you were actually logging. Neither is right for everyone, which is why it's a setting.
+
+### 4A.7 The counting UI is BetterCounter's
+
+The screen is a **list of counter rows**, deliberately copied from [BetterCounter](https://github.com/albertvaka/bettercounter) (GPL-2.0, `org.kde.bettercounter`), the open-source counter app this family was designed against. One row per counter: a large **−** and **+** flanking it, and between them the counter's name, its total for its own interval, and how long since the last entry.
+
+That layout is worth copying because it puts the three things a counting app is actually used for — add one, how many so far, how long since — on one line with no navigation. Charts and history are secondary and sit below it.
+
+**No BetterCounter code is used, and none may be.** What was taken is the interaction design, read from its layout XML and string resources. Its licence is **GPL-2.0-only**, which is *incompatible* with this project's AGPL-3.0-or-later: there is no version of the GPL both can be relicensed to. Copying a single function from it would make queer-curves undistributable. Read it for ideas; write the code here.
+
+Two departures, both forced by this model rather than chosen:
+
+- **Entries carry an amount**, so the row also offers the counter's quick-add presets. BetterCounter's every tap is +1; ours needs "a pint is 2.3 units".
+- **− removes the most recent entry** rather than decrementing a number, because an occurrence graph stores a list of events, not a counter value. It is an undo, and it is disabled when there is nothing to undo.
+
+Two figures under each row also come from BetterCounter: the rate (`avg 2.02/day`, or `avg every 15.8 hours` when the rate is below one per unit) and the goal hit rate (`under 14/week: 100%` — its "Goal reached: %"), computed over completed periods only.
+
+The full entry history is **folded away** behind a disclosure. It exists to correct and delete individual entries, not to be read; BetterCounter keeps it off the main screen entirely, reachable only through the chart and an export. Backdating is folded away for the same reason: opening a counting graph is almost always an intent to add to it *now*, and a full entry form sitting open above the history makes the common case pay for the rare one.
+
+An earlier iteration rendered the history as a 24-hour timeline per day, on the theory that time-of-day position carries information a list can't. It was rejected in review in favour of BetterCounter's shape, and is recorded here only so the idea isn't re-proposed as new.
+
 ## 5. Pronoun graphs
 
-A pronoun graph is a **pronoun/gender card**: the pronouns a person uses and the gender, address, and relationship words they want (or don't want) applied to them, each rated on a preference scale the user defines. It is the third graph family, added in `schema_version = 2`.
+A pronoun graph is a **pronoun/gender card**: the pronouns a person uses and the gender, address, and relationship words they want (or don't want) applied to them, each rated on a preference scale the user defines. It was added in `schema_version = 2`, alongside the occurrence family (§4A) which landed in `schema_version = 3`.
 
 It exists as its own family rather than as a spectrum because the data is categorical and per-entry rather than positional: "they/them favourite, she/her okay at home, he/him never" is a set of labeled preferences, not a point in a coordinate space. §11 already lists categorical spectrum axes as out of scope, and forcing a card into numeric axes would lose exactly the part users care about — the words themselves.
 
@@ -273,7 +377,7 @@ Consequence worth stating plainly: **a card is not a safe place to record a pref
 
 ## 6. Customization
 
-Common to all three families:
+Common to all four families:
 
 | Field | Type | Notes |
 |---|---|---|
@@ -301,6 +405,15 @@ Network-specific:
 | `node_style.shape` | `"circle"` \| `"square"` | |
 | `edge_style.default_width` | number | |
 | `legend.position` | `"top"` \| `"bottom"` \| `"left"` \| `"right"` \| `"hidden"` | |
+
+Occurrence-specific:
+
+| Field | Type | Notes |
+|---|---|---|
+| `bar_style.mode` | `"stacked"` \| `"grouped"` | how multiple counters share a bucket; default `stacked` |
+| `bar_style.rolling_window` | number | rolling mean over N buckets, drawn as a trend line; 0 / unset hides it |
+| `legend.position` | `"top"` \| `"bottom"` \| `"left"` \| `"right"` \| `"hidden"` | |
+| `show_targets` | bool | draw counter targets as dashed reference lines; default true (§4A.4) |
 
 Pronoun-card-specific:
 
@@ -360,8 +473,11 @@ Backwards-incompatible changes (renaming required fields, changing semantics) bu
 |---|---|
 | 1 | Initial release: spectrum and network families. |
 | 2 | Adds the pronoun-card family (§5). Spectrum and network graphs are shape-identical to v1. |
+| 3 | Adds the occurrence family (§4A). Earlier families are shape-identical. |
 
 A new *family* bumps the version even though it adds no field to the existing ones. A v1 client encountering `type: "pronouns"` has no way to render it, and the version gate is the mechanism that turns that into an honest "this graph uses a newer format" message instead of an "invalid type" error or a blank graph. The cost is deliberate and known: a v2 client's spectrum export is refused by a v1 client that could in principle have read it.
+
+**The bump is per release, not per family.** Pronoun cards and occurrence graphs were developed on parallel branches and each landed as "v2" in isolation. Merging them made v3 necessary: a client that knows `pronouns` and calls itself v2 would otherwise accept an `occurrence` graph at face value, fail to render it, and — worse — drop its `occurrences` on the next save. When two families land together, the second one to merge takes the next integer.
 
 ## 10. Matrix encoding (sketch only)
 
@@ -539,6 +655,37 @@ data:
 
 The example sentences under `pn1` render as "They go to the parade every year." / "I went with them — the flag was theirs." / "They made it themself, their own design." Under `pn4` only the first renders; the other two want forms `ey/em` doesn't supply, and are dropped rather than guessed (§5.3).
 
+### 12.5 Drinks — occurrence
+
+```yaml
+type: occurrence
+name: "what I drink"
+schema:
+  counters:
+    - id: "alcohol"
+      label: "alcohol"
+      unit: "units"
+      step: 1
+      presets:
+        - { id: "p-pint", label: "pint", amount: 2.3 }
+        - { id: "p-wine", label: "glass of wine", amount: 2.1 }
+        - { id: "p-single", label: "single", amount: 1 }
+      target: { amount: 14, period: "week", direction: "at_most" }
+    - id: "caffeine"
+      label: "coffee"
+      unit: "cups"
+      step: 1
+  default_bucket: "day"
+  day_start_hour: 4
+data:
+  occurrences:
+    - { id: "oc-1", counter_id: "alcohol", timestamp: "2026-05-01T19:30:00Z", amount: 2.3 }
+    - { id: "oc-3", counter_id: "alcohol", timestamp: "2026-05-02T01:15:00Z", amount: 1 }
+    - { id: "oc-4", counter_id: "caffeine", timestamp: "2026-05-02T09:00:00Z", amount: 1 }
+```
+
+Note `oc-3`: stored as 01:15 UTC on the 2nd, but in a UTC-ish local zone that is a pre-4am hour, so with `day_start_hour: 4` it buckets into the 1st's evening alongside `oc-1`. Which day it lands on depends on the *viewer's* zone — bucketing is local by design (§4A.3), so the same graph read from a different timezone can legitimately group it differently.
+
 ## 13. Decisions log
 
 **2026-05-07** — initial open questions resolved:
@@ -561,3 +708,13 @@ The example sentences under `pn1` render as "They go to the parade every year." 
 
 11. **Other people's names are hidden on screen by default** (§4.1). Hidden means *no label*, not a pseudonym — positional placeholders ("Person 1") were tried and rejected, because a stable handle is still something a viewer can screenshot and talk about. The viewer's own node is marked "You", and reveal is press-and-hold, never a sticky toggle. Presentation-layer only — no change to what is stored or shared.
 12. **`is_self` added to nodes** as an additive optional field (§4.1). No `schema_version` bump for that field on its own: per §9 additive optional fields don't bump, and an older client that ignores it simply masks every node including the owner's — which fails towards *more* privacy, not less. (The version did move to 2 in the same release, for the new pronoun-card family — see decision 9.)
+
+**2026-08-14** — occurrence family added (§4A), `schema_version` → 3:
+
+13. **Occurrence is its own graph family, not a spectrum variant.** A 1D spectrum could hold a running count, but the two disagree on everything that matters: a spectrum interpolates between datapoints (a position persists until the next reading), while occurrences are discrete and additive (two drinks are 4.6 units, not "a position of 2.3 twice"). Aggregation, chart form, and entry UX all follow from that difference.
+14. **Units are per counter and never converted.** No unit registry, no mg↔ml, no standard-drink table. Users count in whatever they think in; the model refuses to guess. Consequence: totals are per counter, never summed across counters.
+15. **Bucketing is local-time with a configurable day boundary.** Timestamps stay UTC (§3.5), but people count in their own days, and a calendar-midnight boundary splits one evening across two days. `day_start_hour` fixes that (§4A.3). A viewer in another timezone may bucket the same graph differently — accepted, because the alternative (freezing the author's zone into the data) makes every reader's "today" wrong instead.
+16. **Targets report, never enforce.** No blocking, no warning dialogs, no nagging. A counter that scolds gets abandoned or lied to, and false data is worse than none. Streaks count completed periods only, so they don't reset at midnight (§4A.4).
+17. **The counting UI is copied from BetterCounter, not invented** (§4A.7). Counter rows with big ±, per-counter intervals, rate and goal-hit-rate lines. Two iterations of a home-grown design (preset chips; a 24-hour timeline history) were rejected in review before this one; the reference app had already solved the layout.
+18. **`−` deletes the most recent entry rather than decrementing.** An occurrence graph stores events, not a counter value, so the only honest meaning of "minus one" is "undo the last one".
+19. **Deleting a counter with logged entries is refused.** The alternative — orphaning the entries — makes them invisible to every total while still shipping them in each snapshot, which is the worst of both outcomes.

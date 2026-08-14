@@ -67,17 +67,18 @@ Read-only mode for non-owners comes from `isOwnGraph()` (room creator vs. curren
 
 ### Domain model
 
-`src/lib/types.ts` is the code-side mirror of `data_model.md` §1–§10. `Graph` is a discriminated union on `type`, with three families:
+`src/lib/types.ts` is the code-side mirror of `data_model.md` §1–§10. `Graph` is a discriminated union on `type`, with four families:
 
 - `SpectrumGraph` — N-D axes, regions, waypoints, timestamped datapoints, saved `SpectrumView`s that reproject the same points cartesian/radial/polar.
 - `NetworkGraph` — nodes, typed edges, `subject_ref` links that require a consent handshake.
+- `OccurrenceGraph` — a counting graph (`data_model.md` §4A): `schema.counters` (free-form unit, step, quick-add presets, optional target) plus `occurrences`, discrete timestamped amounts. Counting, not positioning. All roll-up logic is pure and lives in `graphs/occurrence/aggregate.ts` (bucketing, trailing chart window, targets, streaks, day grouping, `dayFraction`); it is local-time aware with a configurable `day_start_hour` and is the only place that knows how a day is defined, so new derived figures go there rather than into components. The UI is copied from BetterCounter (§4A.7): `ui/OccurrenceCounters.svelte` is a row per counter with big −/+ flanking the name, its total for that counter's own `interval`, and time-since-last. `−` deletes the most recent entry (undo), because the data is a list of events, not a number. Charts and `ui/OccurrenceHistory.svelte` are secondary and folded away. Don't reintroduce a timeline view — one was built and rejected in review. **Never copy code from BetterCounter:** it is GPL-2.0-only, incompatible with this project's AGPL-3.0-or-later (data_model.md §4A.7). Its design is fair game; its source is not.
 - `PronounsGraph` — a pronoun/gender card (`data_model.md` §5): `pronouns` sets and `terms` words, each referencing a per-graph `schema.levels` preference scale by id. Entries whose `level_id`/`group_id` no longer resolve must stay visible under "unsorted"/"ungrouped" rather than vanish — the scale is editable after entries exist. Example sentences are generated in `graphs/pronouns/sentences.ts`, which **skips any template needing a form the user didn't supply** instead of inferring one; inventing "her's" is the same class of bug as misgendering.
 
-Any schema change must bump `SCHEMA_VERSION` and update `data_model.md` §9 — `store/io.ts` refuses to import graphs from a future version, which is the fail-safe old clients rely on. A new graph _family_ bumps it too (v2 = pronoun cards), even though existing families gain no fields.
+Any schema change must bump `SCHEMA_VERSION` and update `data_model.md` §9 — `store/io.ts` refuses to import graphs from a future version, which is the fail-safe old clients rely on. A new graph _family_ bumps it too (v2 = pronoun cards, v3 = occurrence graphs), even though existing families gain no fields. The bump is per release, not per family: pronoun cards and occurrence graphs were built in parallel and both landed as "v2" on their own branches, so merging them required v3 — a v2 client knows `pronouns` and would otherwise accept an `occurrence` graph it cannot render.
 
 Adding a graph family means touching every type-dispatching site: `store/io.ts` validation, `ui/GraphConfigForm.svelte` (create/edit), `routes/graphs/[id]/+page.svelte` (render + editors), `ui/GraphStats.svelte`, `routes/+page.svelte` (`summarize`), and `routes/palettes/[id]/+page.svelte` (per-palette preview). The storage layer (`store/graphs.ts`, `graphs-matrix.ts`) is type-agnostic and needs nothing.
 
-`src/lib/fixtures.ts` holds the canonical test cases from `data_model.md` §12 (aceflux, genderfluid, polycule, polycule-redacted, pronoun-card); they are bundled and read-only.
+`src/lib/fixtures.ts` holds the canonical test cases from `data_model.md` §12 (aceflux, genderfluid, polycule, polycule-redacted, drinks, pronoun-card); they are bundled and read-only.
 
 ### Rendering
 
