@@ -202,6 +202,17 @@ describe('resolveCollection / composeCollection', () => {
 		expect(points.map((p) => p.color)).toEqual(['#ff0000', '#00ff00']);
 	});
 
+	it('resolves bundled fixtures, which never live in the store', async () => {
+		// Regression: resolveCollection used to go through getUserGraph only,
+		// so a collection containing a fixture always reported it missing.
+		graphOps.getUserGraph.mockResolvedValue(undefined);
+		const resolved = await resolveCollection(
+			collection({ members: [{ graph_id: 'fixture-genderfluid' }] })
+		);
+		expect(resolved.missing).toEqual([]);
+		expect(resolved.sources[0].graph.id).toBe('fixture-genderfluid');
+	});
+
 	it('reports members it could not load instead of silently dropping them', async () => {
 		graphOps.getUserGraph.mockImplementation(async (id: string) =>
 			id === 'g_a' ? spectrum('g_a', 'me', [0.2, 0.3]) : undefined

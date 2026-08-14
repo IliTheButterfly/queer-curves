@@ -152,7 +152,14 @@
 				<div class="viewbar">
 					<label>
 						View
-						<select bind:value={selectedViewId}>
+						<!-- Bound to the resolved active view rather than
+					     selectedViewId: that starts null, and a null-valued
+					     select renders as a blank box instead of showing
+					     which view is actually on screen. -->
+						<select
+							value={activeView?.id}
+							onchange={(e) => (selectedViewId = e.currentTarget.value)}
+						>
 							{#each spectrumViews as v (v.id)}
 								<option value={v.id}>{v.name}</option>
 							{/each}

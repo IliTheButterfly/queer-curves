@@ -15,6 +15,7 @@ import {
 } from '$lib/types.js';
 import { matrixStore } from '$lib/matrix/store.svelte.js';
 import { findPalette } from '$lib/presets/palettes.js';
+import { allFixtures } from '$lib/fixtures.js';
 import { getUserGraph } from './graphs.js';
 import {
 	type ComposeIssue,
@@ -190,7 +191,12 @@ export async function resolveCollection(
 	const sources: ComposeSource[] = [];
 	const missing: string[] = [];
 	for (const member of collection.members) {
-		const graph = await getUserGraph(member.graph_id);
+		// Fixtures are bundled and never live in the store, so they have to be
+		// resolved separately — the same split /graphs/[id] makes in its
+		// loader. Without this a collection containing a fixture would always
+		// report it as unloadable.
+		const graph =
+			allFixtures.find((f) => f.id === member.graph_id) ?? (await getUserGraph(member.graph_id));
 		if (!graph) {
 			missing.push(member.graph_id);
 			continue;
