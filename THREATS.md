@@ -102,7 +102,7 @@ Each threat is keyed for cross-reference. Format: short description, primary adv
 
 **Mitigations:**
 - Reducing total decrypted-data exposure (current-only defaults, no auto-history) reduces what's on screenshot-able surfaces.
-- Network graphs mask everyone's name but your own on screen; revealing them is press-and-hold, and exporting an image requires an explicit per-person consent confirmation (`data_model.md` §4.1, §10 decisions log). Raises the cost of the reflexive screenshot without pretending to prevent the deliberate one.
+- Network graphs render everyone but you with no label at all; revealing names is press-and-hold, and exporting an image requires an explicit per-person consent confirmation (`data_model.md` §4.1, §10 decisions log). Raises the cost of the reflexive screenshot without pretending to prevent the deliberate one.
 - Honest UX framing: ephemerality is a UX commitment, not a guarantee.
 
 **Residual risk:** No software can stop a screenshot. Anyone with view access can capture content. **Acknowledged.**
@@ -349,7 +349,7 @@ Written up per §8.
 1. **Threats touched:** T3 (screenshots / receipts) primarily; T1 (coerced disclosure — a masked screen is meaningfully harder to demand a casual look at than a named one); T6 (non-consensual naming, via the export gate); T15 (UX-induced unintended sharing — the export was previously one click from a fully-named image).
 2. **Adversary capability:** A1/A2 lose *casual* capability — the over-the-shoulder look, the screenshot fired off without thinking, the phone handed over "just to show you something". They lose nothing they can obtain deliberately: anyone with view access still has the plaintext names in the room, and holding the button for two seconds produces the same screenshot as before. A3 (homeserver) is unaffected — this is a rendering rule, and the labels were already inside the encrypted event either way.
 3. **Design rules (§7):**
-   - Rule 1 (default to least sharing, friction is consent) — **satisfied**, and it's the whole shape of the feature: hidden by default, reveal is press-and-hold so names can never be left showing on an unattended screen, and export requires naming each affected person and ticking a confirmation.
+   - Rule 1 (default to least sharing, friction is consent) — **satisfied**, and it's the whole shape of the feature: no labels at all by default (a positional pseudonym was tried and rejected — "Person 2" is still a handle that survives a screenshot), reveal is press-and-hold so names can never be left showing on an unattended screen, and export requires naming each affected person and ticking a confirmation.
    - Rule 5 (ephemerality is a UX commitment, not a guarantee) — **satisfied**: the reveal overlay says the quiet part out loud rather than implying the mask is protection, and the export dialog states plainly that a PNG isn't encrypted, can't be un-shared, and doesn't expire.
    - Rule 13 (honest disclosure is part of the UX) — **satisfied**: same two surfaces.
    - Rule 12 (schema versioning / fail safe) — **satisfied**: `is_self` is additive-optional, and a client that ignores it masks *more*, not less.

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	displayLabels,
 	hasHideableNames,
+	HIDDEN_MASK,
 	isSelfNode,
 	maskedLabels,
 	namedMembers,
@@ -32,21 +33,34 @@ describe('isSelfNode', () => {
 });
 
 describe('maskedLabels', () => {
-	it('numbers everyone but you, in node order', () => {
+	it('gives everyone but you no label at all', () => {
 		const g = graphWith([
 			{ id: 'n1', label: 'Alex', is_self: true },
 			{ id: 'n2', label: 'Bea' },
 			{ id: 'n3', label: 'Cy' }
 		]);
-		expect(maskedLabels(g)).toEqual({ n1: SELF_MASK, n2: 'Person 1', n3: 'Person 2' });
+		expect(maskedLabels(g)).toEqual({ n1: SELF_MASK, n2: HIDDEN_MASK, n3: HIDDEN_MASK });
+	});
+
+	it('emits no per-person handle a viewer could reason about', () => {
+		// Not even a positional pseudonym: "Person 2" survives a screenshot
+		// and can be talked about, which is the thing being prevented.
+		const g = graphWith([
+			{ id: 'n1', label: 'Alex', is_self: true },
+			{ id: 'n2', label: 'Bea' },
+			{ id: 'n3', label: 'Cy' }
+		]);
+		for (const label of Object.values(maskedLabels(g))) {
+			expect(label).not.toMatch(/person|\d/i);
+		}
 	});
 
 	it('leaks no real names when nobody is you', () => {
 		// e.g. a graph shared with you by someone else: no node is flagged
-		// self and there's no matching session, so nobody is named at all.
+		// self and there's no matching session, so nothing is named at all.
 		const g = graphWith(polyculeFixture.nodes.map((n) => ({ ...n, is_self: false })));
 		const masked = maskedLabels(g);
-		expect(Object.values(masked)).toEqual(['Person 1', 'Person 2', 'Person 3']);
+		expect(Object.values(masked)).toEqual(['', '', '']);
 		for (const node of g.nodes) {
 			expect(Object.values(masked)).not.toContain(node.label);
 		}
@@ -59,7 +73,7 @@ describe('displayLabels', () => {
 			{ id: 'n1', label: 'Alex', is_self: true },
 			{ id: 'n2', label: 'Bea' }
 		]);
-		expect(displayLabels(g, { reveal: false })).toEqual({ n1: SELF_MASK, n2: 'Person 1' });
+		expect(displayLabels(g, { reveal: false })).toEqual({ n1: SELF_MASK, n2: HIDDEN_MASK });
 	});
 
 	it('returns real names when revealing', () => {
@@ -70,9 +84,10 @@ describe('displayLabels', () => {
 		expect(displayLabels(g, { reveal: true })).toEqual({ n1: 'Alex', n2: 'Bea' });
 	});
 
-	it('falls back to the placeholder for a blank name', () => {
+	it('renders a node with no name of its own as blank either way', () => {
 		const g = graphWith([{ id: 'n1', label: '   ' }]);
-		expect(displayLabels(g, { reveal: true })).toEqual({ n1: 'Person 1' });
+		expect(displayLabels(g, { reveal: true })).toEqual({ n1: HIDDEN_MASK });
+		expect(displayLabels(g, { reveal: false })).toEqual({ n1: HIDDEN_MASK });
 	});
 });
 

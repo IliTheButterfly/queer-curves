@@ -63,7 +63,7 @@ Read-only mode for non-owners comes from `isOwnGraph()` (room creator vs. curren
 
 ### Network name privacy
 
-`graphs/network/privacy.ts` is the single source of truth for what a node is _called_ on screen. Everyone but you renders as "Person N" by default; real names appear only while the hold-to-reveal button is held (`ui/HoldToReveal.svelte`), and PNG export goes through a per-person consent dialog (`ui/NetworkExportDialog.svelte`) before `NetworkChart.exportPng()` will produce an image. "You" is `node.is_self`, or a `subject_ref` matching the signed-in account. This is presentation-only — storage and sharing are unchanged — and the reasoning is logged in `THREATS.md` §10 and `data_model.md` §12. If you touch label rendering, derive labels from `privacy.ts` rather than reading `node.label`, or the masked view and the export will disagree.
+`graphs/network/privacy.ts` is the single source of truth for what a node is _called_ on screen. Everyone but you renders with no label at all by default (a "Person N" pseudonym was tried and rejected — a stable handle is still screenshot-able); your own node reads "You". Real names appear only while the hold-to-reveal button is held (`ui/HoldToReveal.svelte`), and PNG export goes through a per-person consent dialog (`ui/NetworkExportDialog.svelte`) before `NetworkChart.exportPng()` will produce an image. "You" is `node.is_self`, or a `subject_ref` matching the signed-in account. This is presentation-only — storage and sharing are unchanged — and the reasoning is logged in `THREATS.md` §10 and `data_model.md` §12. If you touch label rendering, derive labels from `privacy.ts` rather than reading `node.label`, or the masked view and the export will disagree.
 
 ### Domain model
 

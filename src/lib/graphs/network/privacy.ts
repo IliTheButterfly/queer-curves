@@ -11,10 +11,15 @@
 
 import type { NetworkGraph, NetworkNode, UserRef } from '$lib/types.js';
 
-// What a node is called when names are hidden. Numbered by position among
-// the non-self nodes so the placeholder is stable across renders — the
-// same person is always "Person 2" within a session, which keeps the graph
-// discussable ("who is Person 2?") without naming anyone.
+// What a node is called when names are hidden: nothing at all. An earlier
+// version numbered them ("Person 1", "Person 2") to keep the graph
+// discussable, but a positional pseudonym is still a handle — it survives a
+// screenshot, and it lets someone reason about "who is Person 2" out loud.
+// Hidden means hidden; the shape of the network is the only thing on screen.
+export const HIDDEN_MASK = '';
+
+// You are the exception, and are marked as such rather than named — without
+// it you can't tell which dot you are.
 export const SELF_MASK = 'You';
 
 // Is this node the viewer themselves? Two ways to be self: the owner
@@ -26,27 +31,21 @@ export function isSelfNode(node: NetworkNode, selfUserId?: UserRef | null): bool
 }
 
 // Masked label for every node, keyed by node id. Self keeps a marker
-// ("You"); everyone else becomes "Person N" in node order.
+// ("You"); everyone else gets nothing.
 export function maskedLabels(
 	graph: NetworkGraph,
 	selfUserId?: UserRef | null
 ): Record<string, string> {
 	const out: Record<string, string> = {};
-	let n = 0;
 	for (const node of graph.nodes) {
-		if (isSelfNode(node, selfUserId)) {
-			out[node.id] = SELF_MASK;
-		} else {
-			n += 1;
-			out[node.id] = `Person ${n}`;
-		}
+		out[node.id] = isSelfNode(node, selfUserId) ? SELF_MASK : HIDDEN_MASK;
 	}
 	return out;
 }
 
 // The label a node should render with, given whether names are revealed.
-// An unnamed node stays masked-looking either way — there's nothing to hide
-// and nothing to show.
+// A node with no name of its own renders blank either way — there's nothing
+// to hide and nothing to show.
 export function displayLabels(
 	graph: NetworkGraph,
 	opts: { reveal: boolean; selfUserId?: UserRef | null }
