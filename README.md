@@ -4,7 +4,7 @@ Privacy-respecting graphs for tracking and sharing identity over time. Built on 
 
 ## Status
 
-**Pre-development on the protocol side; usable locally.** The SvelteKit app runs end-to-end against `localStorage` — you can create graphs, drop datapoints, configure schemas, apply queer-flag palettes, and export/import JSON. Matrix integration (the actual sharing/federation layer the docs describe) hasn't started yet.
+**Early but end-to-end.** You can create graphs, drop datapoints, configure schemas, apply queer-flag palettes, and export/import JSON — locally against `localStorage`, or backed by a Matrix room with E2EE once you sign in and set up keys. Sharing works: invite someone and they get a read-only view of the same graph. Network graphs hide everyone's name but yours by default (hold the reveal button to show them; exporting an image asks you to confirm consent from each person named).
 
 Design docs:
 
@@ -116,7 +116,7 @@ The single seam to swap for Matrix later is [src/lib/store/graphs.ts](src/lib/st
 
 ### Storage
 
-User-created graphs live in `localStorage` under the key `queer-curves:user-graphs`. To wipe in dev: open DevTools console and run `localStorage.removeItem('queer-curves:user-graphs')`. Fixtures (aceflux, genderfluid, polycule, polycule-redacted) are bundled into the build and are read-only — they live in `src/lib/fixtures.ts`.
+User-created graphs live in `localStorage` under the key `queer-curves:user-graphs`. To wipe in dev: open DevTools console and run `localStorage.removeItem('queer-curves:user-graphs')`. Fixtures (aceflux, genderfluid, mood-energy, polycule, polycule-redacted, pronoun-card) are bundled into the build and are read-only — they live in `src/lib/fixtures.ts`.
 
 JSON export/import works against this same store, so you can hand-edit a graph file and re-import it.
 

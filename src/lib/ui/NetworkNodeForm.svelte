@@ -19,6 +19,11 @@
 
 	let label = $state(untrack(() => initial?.label ?? ''));
 	let color = $state(untrack(() => initial?.color ?? ''));
+	let isSelf = $state(untrack(() => initial?.is_self ?? false));
+
+	// Only one node can be you. Warn rather than silently reassigning — the
+	// owner should see which node currently holds the flag.
+	const existingSelf = $derived(graph.nodes.find((n) => n.is_self && n.id !== initial?.id));
 
 	const paletteColors = $derived(graph.customization.theme.palette);
 
@@ -38,6 +43,7 @@
 			label: label.trim()
 		};
 		if (color) node.color = color;
+		if (isSelf && !existingSelf) node.is_self = true;
 		// Preserve fields we don't edit here.
 		if (initial?.avatar_ref) node.avatar_ref = initial.avatar_ref;
 		if (initial?.subject_ref) node.subject_ref = initial.subject_ref;
@@ -65,6 +71,17 @@
 			<ColorPickerWithPalette bind:value={color} {paletteColors} ariaLabel="person colour" />
 		</div>
 	</div>
+	<label class="selfrow" class:disabled={Boolean(existingSelf)}>
+		<input type="checkbox" bind:checked={isSelf} disabled={Boolean(existingSelf)} />
+		<span>
+			This is me
+			{#if existingSelf}
+				<small>— “{existingSelf.label}” is already marked as you</small>
+			{:else}
+				<small>— your own name stays visible; everyone else's is hidden by default</small>
+			{/if}
+		</span>
+	</label>
 	<div class="actions">
 		{#if oncancel}
 			<button type="button" class="cancel" onclick={oncancel}>Cancel</button>
@@ -116,6 +133,18 @@
 	.field input[type='text']:focus {
 		outline: none;
 		border-color: var(--color-accent);
+	}
+	.selfrow {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--space-2);
+		font-size: 0.9em;
+	}
+	.selfrow small {
+		color: var(--color-muted);
+	}
+	.selfrow.disabled {
+		opacity: 0.6;
 	}
 	.actions {
 		display: flex;

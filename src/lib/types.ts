@@ -219,6 +219,11 @@ export interface NetworkNode {
 	subject_ref?: UserRef;
 	// Required when subject_ref is set; tracks the consent handshake state.
 	link_status?: LinkStatus;
+	// Marks the node as the graph owner. Name privacy (graphs/network/privacy.ts)
+	// masks every *other* node's label by default, so the client needs to know
+	// which one is you when there's no Matrix session to match subject_ref
+	// against. Additive and optional — no schema bump (data_model.md §9).
+	is_self?: boolean;
 	position?: { x: number; y: number };
 }
 

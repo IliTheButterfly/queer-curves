@@ -16,8 +16,11 @@
 	import GenderTermForm from '$lib/ui/GenderTermForm.svelte';
 	import GenderTermList from '$lib/ui/GenderTermList.svelte';
 	import ShareSection from '$lib/ui/ShareSection.svelte';
+	import HoldToReveal from '$lib/ui/HoldToReveal.svelte';
+	import NetworkExportDialog from '$lib/ui/NetworkExportDialog.svelte';
+	import { hasHideableNames, namedMembers } from '$lib/graphs/network/privacy.js';
 	import { deleteUserGraph, getUserGraph, isOwnGraph, saveUserGraph } from '$lib/store/graphs.js';
-	import { downloadGraphAsJson } from '$lib/store/io.js';
+	import { downloadDataUrl, downloadGraphAsJson } from '$lib/store/io.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 	import type {
 		GenderTerm,
@@ -277,6 +280,28 @@
 		await goto('/');
 	}
 
+	// ─── Network name privacy ────────────────────────────────────────────
+	// Names of everyone but you are masked by default; `revealNames` is true
+	// only while the reveal button is physically held down. It is never
+	// persisted — every page load starts hidden.
+	let revealNames = $state(false);
+	let networkChart = $state<NetworkChart | null>(null);
+	let showExportDialog = $state(false);
+
+	const selfUserId = $derived(matrixStore.session?.userId ?? null);
+	const canHideNames = $derived(
+		graph?.type === 'network' ? hasHideableNames(graph, selfUserId) : false
+	);
+	const exportMembers = $derived(graph?.type === 'network' ? namedMembers(graph, selfUserId) : []);
+
+	function handleExportPng() {
+		if (!graph || graph.type !== 'network') return;
+		const dataUrl = networkChart?.exportPng();
+		showExportDialog = false;
+		if (!dataUrl) return;
+		downloadDataUrl(dataUrl, graph.name, 'png');
+	}
+
 	function pluralize(n: number, singular: string): string {
 		return `${n} ${n === 1 ? singular : singular + 's'}`;
 	}
@@ -350,11 +375,52 @@
 			{#if graph.type === 'spectrum'}
 				<SpectrumHistoryChart {graph} view={activeView} />
 			{:else if graph.type === 'network'}
-				<NetworkChart {graph} onPositionsChange={handleNetworkPositions} />
+				<div class="network-wrap" class:revealed={revealNames}>
+					<NetworkChart
+						bind:this={networkChart}
+						{graph}
+						{selfUserId}
+						reveal={revealNames}
+						onPositionsChange={handleNetworkPositions}
+					/>
+					{#if revealNames}
+						<!-- Deliberately drawn over the chart, so it lands in any
+						     screenshot taken while names are showing. -->
+						<div class="reveal-overlay" role="status">
+							<strong>Real names are showing.</strong>
+							Don't screenshot or share this view — everyone here has to agree before their name leaves
+							your screen.
+						</div>
+					{/if}
+				</div>
 			{:else}
 				<PronounCard {graph} />
 			{/if}
 		</div>
+
+		{#if graph.type === 'network'}
+			<div class="privacy-bar">
+				{#if canHideNames}
+					<HoldToReveal bind:revealed={revealNames} />
+					<span class="privacy-note">
+						Names are hidden by default. Only you are named on screen.
+					</span>
+				{:else}
+					<span class="privacy-note">Nobody but you is named in this network.</span>
+				{/if}
+				<button type="button" class="ghost-link" onclick={() => (showExportDialog = true)}>
+					Export PNG…
+				</button>
+			</div>
+		{/if}
+
+		{#if showExportDialog}
+			<NetworkExportDialog
+				members={exportMembers}
+				onconfirm={handleExportPng}
+				oncancel={() => (showExportDialog = false)}
+			/>
+		{/if}
 
 		<GraphStats {graph} />
 
@@ -424,6 +490,42 @@
 		border-radius: 999px;
 		font-size: 0.75em;
 		color: var(--color-muted);
+	}
+	.network-wrap {
+		position: relative;
+	}
+	.network-wrap.revealed {
+		outline: 2px solid rgba(255, 170, 80, 0.5);
+		outline-offset: 2px;
+		border-radius: 6px;
+	}
+	.reveal-overlay {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		padding: var(--space-2) var(--space-3);
+		background: rgba(60, 34, 6, 0.92);
+		border-top: 1px solid rgba(255, 170, 80, 0.5);
+		color: #ffcc90;
+		font-size: 0.85em;
+		line-height: 1.4;
+		pointer-events: none;
+	}
+	.reveal-overlay strong {
+		color: #ffdcb0;
+	}
+	.privacy-bar {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		flex-wrap: wrap;
+		margin-top: var(--space-2);
+	}
+	.privacy-note {
+		color: var(--color-muted);
+		font-size: 0.85em;
+		flex: 1;
 	}
 	.read-only-tag {
 		margin: var(--space-2) 0 0;

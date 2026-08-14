@@ -26,7 +26,7 @@ Matrix-backed work needs a homeserver. `scripts/dev-matrix.sh up | down | logs |
 
 ### Headless probes (`scripts/*.mjs`)
 
-Not CI tests — manual playwright-core harnesses that drive a real browser against `pnpm dev` + dev Synapse to exercise flows unit tests can't (crypto, sync, multi-user). Each covers one path: `smoke-test` (login → keys → create → reload), `share-probe` (two-user invite/accept), `multi-device-probe`, `delete-probe`, `network-probe`, `migration-probe`, `restore-error-probe`, `datapoint-probe`, `refresh-probe`. They expect `DEV_URL` (default `http://localhost:5174`) and `HOMESERVER`. Add a probe when a change touches an E2EE or multi-party path; run the relevant one before claiming such a change works.
+Not CI tests — manual playwright-core harnesses that drive a real browser against `pnpm dev` + dev Synapse to exercise flows unit tests can't (crypto, sync, multi-user). Each covers one path: `smoke-test` (login → keys → create → reload), `share-probe` (two-user invite/accept), `multi-device-probe`, `delete-probe`, `network-probe`, `migration-probe`, `restore-error-probe`, `datapoint-probe`, `refresh-probe`, `name-privacy-probe` (the only one needing no homeserver — it drives the polycule fixture). They expect `DEV_URL` (default `http://localhost:5174`) and `HOMESERVER`. Add a probe when a change touches an E2EE or multi-party path; run the relevant one before claiming such a change works.
 
 ## Architecture
 
@@ -60,6 +60,10 @@ One room per graph, E2EE from creation. Three custom event types in the `app.que
 This whole-snapshot design intentionally trades the event-stream/history granularity described in `sharing_model.md` for something verifiable against a real homeserver. Consequence to remember: megolm only shares forward from a join, so `client.ts` hooks `RoomState.events` and **re-sends the latest snapshot when someone joins** — without it an invitee lands in a room they cannot decrypt.
 
 Read-only mode for non-owners comes from `isOwnGraph()` (room creator vs. current user).
+
+### Network name privacy
+
+`graphs/network/privacy.ts` is the single source of truth for what a node is _called_ on screen. Everyone but you renders with no label at all by default (a "Person N" pseudonym was tried and rejected — a stable handle is still screenshot-able); your own node reads "You". Real names appear only while the hold-to-reveal button is held (`ui/HoldToReveal.svelte`), and PNG export goes through a per-person consent dialog (`ui/NetworkExportDialog.svelte`) before `NetworkChart.exportPng()` will produce an image. "You" is `node.is_self`, or a `subject_ref` matching the signed-in account. This is presentation-only — storage and sharing are unchanged — and the reasoning is logged in `THREATS.md` §11 and `data_model.md` §13. If you touch label rendering, derive labels from `privacy.ts` rather than reading `node.label`, or the masked view and the export will disagree.
 
 ### Domain model
 

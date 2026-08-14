@@ -17,6 +17,18 @@ export function downloadGraphAsJson(graph: Graph): void {
 	URL.revokeObjectURL(url);
 }
 
+// Save an already-encoded data: URL (e.g. cytoscape's PNG output) under a
+// name derived from the graph. Same download mechanics as the JSON export,
+// minus the object-URL lifecycle — a data: URL needs no revoking.
+export function downloadDataUrl(dataUrl: string, graphName: string, extension: string): void {
+	const a = document.createElement('a');
+	a.href = dataUrl;
+	a.download = `${slugify(graphName) || 'graph'}.${extension}`;
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+}
+
 function slugify(s: string): string {
 	return s
 		.normalize('NFKD')
