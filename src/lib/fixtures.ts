@@ -176,7 +176,9 @@ export const polyculeFixture: NetworkGraph = {
 		legend: { position: 'right' }
 	},
 	nodes: [
-		{ id: 'n1', label: 'Alex' },
+		// Alex is the graph owner, so their name stays visible while Bea and Cy
+		// render as "Person 1" / "Person 2" until names are held open.
+		{ id: 'n1', label: 'Alex', is_self: true },
 		{ id: 'n2', label: 'Bea' },
 		{ id: 'n3', label: 'Cy' }
 	],
