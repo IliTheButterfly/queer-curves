@@ -416,6 +416,7 @@ Brief privacy footnote; full treatment lives in `THREATS.md`.
 
 Tabled for later discussion, not yet decided.
 
+0. **Amendments proposed by the implementation audit.** `SECURITY_PLAN.md` §4 argues that §8.1's "current-only" does not hold under the v1 whole-snapshot protocol (history travels in the newest event), that §8.2's key-forwarding history grant is unnecessary under that protocol, and that §9.1's per-event-type power-level table cannot be enforced in an E2EE room — with a consequence for §9.3's editor asymmetry. Not yet accepted; read that section alongside this one.
 1. **Recovery UX.** If the owner loses all devices and their key backup, all their graphs (and others' shared with them) become permanently unreadable. Account recovery is a substantial UX area touching social-recovery, paper recovery codes, and tradeoffs between security and usability. To revisit explicitly with the user.
 
 ## 16. Decisions log
