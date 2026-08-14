@@ -78,6 +78,8 @@ try {
 	const bobMatrixId = `@${BOB}:localhost`;
 	const shareSection = a.page.locator('section.share');
 	await shareSection.waitFor({ timeout: 10000 });
+	// The raw-id field is the power-user fallback, folded behind a summary.
+	await a.page.locator('details.manual-invite summary').click();
 	await a.page.locator('input[placeholder="@bob:example.org"]').fill(bobMatrixId);
 	await a.page.getByRole('button', { name: /^Invite$/ }).click();
 	await a.page.waitForSelector('p.success', { timeout: 10000 });

@@ -230,6 +230,14 @@ async function addDatapoint(coords) {
 // Invite another Matrix account to the graph currently open. Only works for
 // Matrix-backed graphs (`!room:server` ids) that you own.
 async function invite(userId) {
+	// The raw-id field lives folded behind "Invite by Matrix id…" since the
+	// friends-list picker became the primary path.
+	// NB: read the DOM `open` property — getAttribute returns "" when open,
+	// which is falsy and would toggle the fold shut again.
+	const fold = page.locator('details.manual-invite');
+	if ((await fold.count()) > 0 && !(await fold.evaluate((el) => el.open))) {
+		await fold.locator('summary').click();
+	}
 	const input = page.locator('input[placeholder="@bob:example.org"]');
 	await input.fill(userId);
 	await page

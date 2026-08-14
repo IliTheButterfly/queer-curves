@@ -81,7 +81,7 @@ Contacts are owner-private. They do not appear in any shared room. They are neve
 
 Three flows:
 
-1. **By share link.** A short URL that bundles a Matrix ID and an optional initial room invite. Format TBD; intent is to be QR-friendly. The receiving client opens the app, prompts to add the contact.
+1. **By share link.** A short URL that bundles a Matrix ID and an optional initial room invite. **Format (decided 2026-08-14): a `https://matrix.to/#/@user:server` URL** — QR-friendly, copy-pastable, and understood by the wider Matrix ecosystem. The receiving client accepts it pasted into the add-friend field (and, later, scanned as a QR code).
 2. **By Matrix ID.** Power-user fallback: paste `@user:server`.
 3. **By scanning a QR code** that another queer-curves user displays. (Same payload as share link.)
 

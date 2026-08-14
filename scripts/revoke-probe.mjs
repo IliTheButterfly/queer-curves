@@ -71,6 +71,7 @@ async function createGraph(page, graphName) {
 async function inviteAndAccept(a, b, graphUrl, bobMatrixId, graphName) {
 	await a.page.goto(graphUrl, { waitUntil: 'domcontentloaded' });
 	await a.page.locator('section.share').waitFor({ timeout: 10000 });
+	await a.page.locator('details.manual-invite summary').click();
 	await a.page.locator('input[placeholder="@bob:example.org"]').fill(bobMatrixId);
 	await a.page.locator('input[type="radio"][value="history"]').check();
 	await a.page.getByRole('button', { name: /^Invite$/ }).click();

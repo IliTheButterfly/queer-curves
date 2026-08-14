@@ -113,6 +113,7 @@ try {
 	log('alice created graph with 2 datapoints');
 
 	// ── Part 1: current-only (the default — no radio touched) ─────────
+	await a.page.locator('details.manual-invite summary').click();
 	await a.page.locator('input[placeholder="@bob:example.org"]').fill(bobMatrixId);
 	await a.page.getByRole('button', { name: /^Invite$/ }).click();
 	await a.page.waitForSelector('p.success', { timeout: 15000 });
@@ -150,6 +151,13 @@ try {
 	log('bob sees the current-only disclosure (want true):', disclosure);
 
 	// ── Part 2: upgrade to full history ────────────────────────────────
+	// (the fold is already open from part 1; guard anyway for reload paths.
+	// NB: check the DOM `open` property — getAttribute returns "" when open,
+	// which is falsy and would toggle the fold shut.)
+	const foldOpen = await a.page.locator('details.manual-invite').evaluate((el) => el.open);
+	if (!foldOpen) {
+		await a.page.locator('details.manual-invite summary').click();
+	}
 	await a.page.locator('input[placeholder="@bob:example.org"]').fill(bobMatrixId);
 	await a.page.locator('input[type="radio"][value="history"]').check();
 	await a.page.getByRole('button', { name: /^Invite$/ }).click();

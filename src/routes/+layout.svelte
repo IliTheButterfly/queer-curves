@@ -79,6 +79,7 @@
 		{#if !matrixStore.hydrated}
 			<span class="muted">…</span>
 		{:else if matrixStore.session}
+			<a class="login-link" href="/friends">Friends</a>
 			<span class="user-id" title="Matrix user id">
 				{matrixStore.session.userId}
 			</span>

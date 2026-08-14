@@ -18,28 +18,28 @@ Three things this plan tries to keep separate:
 
 Everything the Matrix layer does today, against `sharing_model.md`.
 
-| Area                                              | Spec             | State                                                                                                                        |
-| ------------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| One room per graph, E2EE at creation              | §2.1, §2.3       | **Done.** `graphs-matrix.ts` creates a megolm room per graph; `waitForEncryption` prevents the plaintext-first-snapshot bug. |
-| Room-metadata hygiene                             | §2.2             | **Done in this change** (S1). Previously leaked the graph title as `m.room.name`.                                            |
-| Marker state event for cheap listing              | §2.1             | **Done.**                                                                                                                    |
-| Snapshot on join                                  | §6.1–§6.2        | **Done.** `client.ts` hooks `RoomState.events` and re-sends on a join transition.                                            |
-| Power levels                                      | §9.1             | **Partial, in this change** (S2, and amendment §4.3). Owner-only writes; editor role not implemented.                        |
-| Login / register / restore / logout               | §16.4            | **Done.**                                                                                                                    |
-| Cross-signing + key backup at first login         | §16.4 decision 4 | **Done**, mandatory, with the destructive-re-setup guard.                                                                    |
-| Recovery-key restore on a new device              | §15.1            | **Done** (`restoreFromRecoveryKey`).                                                                                         |
-| Invite a viewer                                   | §5.1             | **Partial.** Raw Matrix-ID invite only; no contacts, no groups, no grant types.                                              |
-| Accept / decline invites                          | §5               | **Done.**                                                                                                                    |
-| Deletion (tombstone + kick + leave)               | §10.3            | **Done** (Stage 1). Tombstone, then kick every member, then leave — in that order.                                           |
-| Contacts & groups                                 | §3.2, §4         | **Not started.** No account_data at all.                                                                                     |
-| Grant types (view current / history)              | §5.1, §8         | **Done** (Stage 2). Per-grant share rooms + projections; `edit` stays out pending §7 Q3.                                     |
-| History grants (`m.forwarded_room_key`)           | §8.2             | **Superseded** — §4.2 accepted; history grants are a projection choice, key forwarding kept for a future event-stream model. |
-| Soft / hard revocation                            | §10.1, §10.2     | **Done** (Stage 1). Hard revoke = per-member kick in the share UI; soft revocation is the documented absence of sends.       |
-| Weekly heartbeat snapshot                         | §6.3             | **Done** (Stage 2), and honestly partial: it flattens "did anything change", not per-write timing (see S7).                  |
-| Detail-level variant rooms                        | §7               | **Not started** (network graphs only, deferred by design).                                                                   |
-| `subject_ref` consent handshake                   | §12              | **Not started.** `link_status` is typed in `types.ts`; no to-device traffic.                                                 |
-| Device verification / cross-signing of _contacts_ | §3.2 `verified`  | **Not started.** See S3 — this is the most serious gap.                                                                      |
-| Encrypted-at-rest for our own data                | `STACK.md` §6    | **Not started.** Access token is plaintext `localStorage`.                                                                   |
+| Area                                              | Spec             | State                                                                                                                                                             |
+| ------------------------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One room per graph, E2EE at creation              | §2.1, §2.3       | **Done.** `graphs-matrix.ts` creates a megolm room per graph; `waitForEncryption` prevents the plaintext-first-snapshot bug.                                      |
+| Room-metadata hygiene                             | §2.2             | **Done in this change** (S1). Previously leaked the graph title as `m.room.name`.                                                                                 |
+| Marker state event for cheap listing              | §2.1             | **Done.**                                                                                                                                                         |
+| Snapshot on join                                  | §6.1–§6.2        | **Done.** `client.ts` hooks `RoomState.events` and re-sends on a join transition.                                                                                 |
+| Power levels                                      | §9.1             | **Partial, in this change** (S2, and amendment §4.3). Owner-only writes; editor role not implemented.                                                             |
+| Login / register / restore / logout               | §16.4            | **Done.**                                                                                                                                                         |
+| Cross-signing + key backup at first login         | §16.4 decision 4 | **Done**, mandatory, with the destructive-re-setup guard.                                                                                                         |
+| Recovery-key restore on a new device              | §15.1            | **Done** (`restoreFromRecoveryKey`).                                                                                                                              |
+| Invite a viewer                                   | §5.1             | **Partial.** Raw Matrix-ID invite only; no contacts, no groups, no grant types.                                                                                   |
+| Accept / decline invites                          | §5               | **Done.**                                                                                                                                                         |
+| Deletion (tombstone + kick + leave)               | §10.3            | **Done** (Stage 1). Tombstone, then kick every member, then leave — in that order.                                                                                |
+| Contacts & groups                                 | §3.2, §4         | **Contacts done** (pulled forward on user request): encrypted account_data with the §4.3 version guard, friend links, share-dialog picker. Groups remain Stage 3. |
+| Grant types (view current / history)              | §5.1, §8         | **Done** (Stage 2). Per-grant share rooms + projections; `edit` stays out pending §7 Q3.                                                                          |
+| History grants (`m.forwarded_room_key`)           | §8.2             | **Superseded** — §4.2 accepted; history grants are a projection choice, key forwarding kept for a future event-stream model.                                      |
+| Soft / hard revocation                            | §10.1, §10.2     | **Done** (Stage 1). Hard revoke = per-member kick in the share UI; soft revocation is the documented absence of sends.                                            |
+| Weekly heartbeat snapshot                         | §6.3             | **Done** (Stage 2), and honestly partial: it flattens "did anything change", not per-write timing (see S7).                                                       |
+| Detail-level variant rooms                        | §7               | **Not started** (network graphs only, deferred by design).                                                                                                        |
+| `subject_ref` consent handshake                   | §12              | **Not started.** `link_status` is typed in `types.ts`; no to-device traffic.                                                                                      |
+| Device verification / cross-signing of _contacts_ | §3.2 `verified`  | **Not started.** See S3 — this is the most serious gap.                                                                                                           |
+| Encrypted-at-rest for our own data                | `STACK.md` §6    | **Not started.** Access token is plaintext `localStorage`.                                                                                                        |
 
 ## 3. Gap register
 
@@ -229,6 +229,8 @@ S3 is the most serious gap in this plan and sits in the last stage — deliberat
 4. **Pre-existing title leak (S1 residual).** Should the app tell existing users that graph titles created before the fix were visible to their homeserver? A one-time notice is the §7-rule-13 answer; it also tells every user something alarming about data that, on the dev homeserver, only they ever saw.
 
 ## 8. Decisions log
+
+**2026-08-14 (evening)** — contacts pulled forward from Stage 3 on user request (share-dialog review: "add friends… using a QR code or a link… select from your friend's list instead of a text-entered user"). `matrix/contacts.ts`: owner-private friends list in account_data, AES-256-GCM under an HKDF key derived from the key-backup private key (every provisioned device already holds it; ciphertext is all the homeserver sees), with §4.3's version guard against cross-device clobbering. Friend links are matrix.to URLs (§3.3's "format TBD" resolved — QR-friendly; an in-app QR render awaits a dependency decision per STACK.md §15). The share dialog now picks from friends by display name (§3.1), with the raw-id field folded away as the power-user fallback. Groups, and the `verified` flag's meaning, remain Stage 3.
 
 **2026-08-14 (later still)** — Stage 2 landed: S4 (per-grant projections + share rooms), S7 (weekly heartbeat), the S10 publish-half (unconfirmed links stripped from every projection), and the §4.1/§4.2 amendments accepted and written into `sharing_model.md` §8. T2/T4/T5's "default current-only grants" mitigation is now real for all new shares; members added before Stage 2 hold full history and are labelled as such. `edit` grants remain unshipped pending §7 Q3.
 
