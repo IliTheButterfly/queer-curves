@@ -34,6 +34,29 @@
 		render(svgEl, graph, resolvedView);
 	});
 
+	// Datapoints composed from several graphs — a collection view, or a
+	// merge — carry a `from:<source>` tag (store/compose.ts). Joining two
+	// different sources with a trajectory segment would draw one person's
+	// path running into another's, so segments that span a source boundary
+	// are skipped: each source keeps its own trail, and the clouds stay
+	// visually distinct. Ordinary single-source graphs have no such tag, so
+	// every segment passes and nothing changes for them.
+	function seriesOf(dp: SpectrumDatapoint): string | undefined {
+		return dp.tags?.find((t) => t.startsWith('from:'));
+	}
+
+	// Index of the next point belonging to the same source, or -1 if this is
+	// that source's last point. Not simply `i + 1`: composed points are
+	// sorted into one global time order, so two sources' points interleave
+	// and a source's own consecutive points are rarely adjacent overall.
+	function nextInSeries(points: SpectrumDatapoint[], i: number): number {
+		const series = seriesOf(points[i]);
+		for (let j = i + 1; j < points.length; j++) {
+			if (seriesOf(points[j]) === series) return j;
+		}
+		return -1;
+	}
+
 	function render(el: SVGSVGElement, g: SpectrumGraph, v: SpectrumView | undefined) {
 		const root = d3.select(el);
 		root.selectAll('*').remove();
@@ -296,7 +319,9 @@
 		const gradPrefix1d = `histgrad1d-${g.id}-`;
 		for (let i = 0; i < points.length - 1; i++) {
 			const a = points[i];
-			const b = points[i + 1];
+			const j = nextInSeries(points, i);
+			if (j < 0) continue;
+			const b = points[j];
 			const ax = xScale(new Date(a.timestamp));
 			const ay = yScale(a.coordinates[0]);
 			const bx = xScale(new Date(b.timestamp));
@@ -317,7 +342,7 @@
 			grad
 				.append('stop')
 				.attr('offset', '100%')
-				.attr('stop-color', colorOf(g, b, i + 1));
+				.attr('stop-color', colorOf(g, b, j));
 			inner
 				.append('line')
 				.attr('x1', ax)
@@ -585,7 +610,9 @@
 		const gradPrefix2d = `histgrad2d-${g.id}-`;
 		for (let i = 0; i < points.length - 1; i++) {
 			const a = points[i];
-			const b = points[i + 1];
+			const j = nextInSeries(points, i);
+			if (j < 0) continue;
+			const b = points[j];
 			const ax = xScale(a.coordinates[0]);
 			const ay = yScale(a.coordinates[1]);
 			const bx = xScale(b.coordinates[0]);
@@ -606,7 +633,7 @@
 			grad
 				.append('stop')
 				.attr('offset', '100%')
-				.attr('stop-color', colorOf(g, b, i + 1));
+				.attr('stop-color', colorOf(g, b, j));
 			inner
 				.append('line')
 				.attr('x1', ax)
@@ -785,7 +812,9 @@
 		const gradPrefix = `histgrad3d-${g.id}-`;
 		for (let i = 0; i < points.length - 1; i++) {
 			const a = points[i];
-			const b = points[i + 1];
+			const j = nextInSeries(points, i);
+			if (j < 0) continue;
+			const b = points[j];
 			const ax = xScale(a.coordinates[0]);
 			const ay = yScale(a.coordinates[1]);
 			const bx = xScale(b.coordinates[0]);
@@ -1217,7 +1246,9 @@
 		const gradPrefix = `viewgrad-${view.id}-`;
 		for (let i = 0; i < points.length - 1; i++) {
 			const a = points[i];
-			const b = points[i + 1];
+			const j = nextInSeries(points, i);
+			if (j < 0) continue;
+			const b = points[j];
 			const ax = xScale(xCh.extract(a) as never) as number;
 			const ay = yScale(yCh.extract(a) as never) as number;
 			const bx = xScale(xCh.extract(b) as never) as number;
@@ -1232,10 +1263,7 @@
 				.attr('x2', bx)
 				.attr('y2', by);
 			grad.append('stop').attr('offset', '0%').attr('stop-color', dpColor(a, i));
-			grad
-				.append('stop')
-				.attr('offset', '100%')
-				.attr('stop-color', dpColor(b, i + 1));
+			grad.append('stop').attr('offset', '100%').attr('stop-color', dpColor(b, j));
 			inner
 				.append('line')
 				.attr('x1', ax)
@@ -1596,7 +1624,9 @@
 		const gradPrefix = `radgrad-${view.id}-`;
 		for (let i = 0; i < points.length - 1; i++) {
 			const a = points[i];
-			const b = points[i + 1];
+			const j = nextInSeries(points, i);
+			if (j < 0) continue;
+			const b = points[j];
 			const aP = projectDp(a);
 			const bP = projectDp(b);
 			if (!aP || !bP) continue;
@@ -1612,10 +1642,7 @@
 				.attr('x2', bx)
 				.attr('y2', by);
 			grad.append('stop').attr('offset', '0%').attr('stop-color', dpColor(a, i));
-			grad
-				.append('stop')
-				.attr('offset', '100%')
-				.attr('stop-color', dpColor(b, i + 1));
+			grad.append('stop').attr('offset', '100%').attr('stop-color', dpColor(b, j));
 			inner
 				.append('line')
 				.attr('x1', ax)

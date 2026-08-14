@@ -65,6 +65,26 @@ Read-only mode for non-owners comes from `isOwnGraph()` (room creator vs. curren
 
 `graphs/network/privacy.ts` is the single source of truth for what a node is _called_ on screen. Everyone but you renders with no label at all by default (a "Person N" pseudonym was tried and rejected — a stable handle is still screenshot-able); your own node reads "You". Real names appear only while the hold-to-reveal button is held (`ui/HoldToReveal.svelte`), and PNG export goes through a per-person consent dialog (`ui/NetworkExportDialog.svelte`) before `NetworkChart.exportPng()` will produce an image. "You" is `node.is_self`, or a `subject_ref` matching the signed-in account. This is presentation-only — storage and sharing are unchanged — and the reasoning is logged in `THREATS.md` §11 and `data_model.md` §13. If you touch label rendering, derive labels from `privacy.ts` rather than reading `node.label`, or the masked view and the export will disagree.
 
+### Combining graphs
+
+`store/compose.ts` is the one place several graphs become one, and both features that do it share it (`data_model.md` §10a):
+
+- **Merge** (`store/merge.ts`, `/graphs/merge`) composes and _saves_ the result as a new, ordinary graph. Non-destructive — sources are never touched, so the undo is deleting the result.
+- **Collections** (`store/collections.ts`, `/collections`) save a list of graph ids and compose them _live_ on every open, then hand the throwaway result to the normal `SpectrumHistoryChart`/`NetworkChart`. Nothing composed is persisted.
+
+`composeGraphs` is pure — id and timestamp are parameters, not `Date.now()` — so it is directly testable. Call `checkComposable` first and surface every issue it returns; the errors block composition and the warnings (axis mismatch, foreign ownership) are what makes the operation honest rather than quietly lossy. Two rules there are load-bearing rather than cosmetic: axis ranges union instead of rescaling coordinates, and network `link_status` takes the _most restrictive_ value so a merge can't manufacture consent.
+
+A collection renders in one of two modes, and they have different compatibility rules:
+
+- **Combined** — `compose.ts` lays members onto _shared_ axes (axis 0 is axis 0 for everyone), so it needs matching dimensionality.
+- **Custom axes** — `crossplot.ts` binds each visual channel to one `(member, axis)` pair, so it reads _named_ axes and doesn't care about dimensionality. This is what makes "my stress vs their stress" and "stress vs libido" expressible.
+
+**Pronoun cards are refused by both modes** — their preference scale is user-authored, so mapping one card's levels onto another's would put our vocabulary in the user's mouth (`data_model.md` §13 decision 7 and 23). Refuse explicitly with the reason shown; don't invent a mapping.
+
+That split is why there are two checks. `checkComposable` is strict (merges, and combined mode); `checkCollectionMembers` downgrades `dimension-mismatch` to a warning because custom axes handles it. Issues carry a machine-readable `code` — match on that, never on the prose. When both channels are axes, points are paired by **last-observation-carried-forward**, which is an approximation and must keep its caveat text on screen (THREATS.md §11).
+
+`collections.ts` mirrors `graphs.ts` exactly (per-id dispatch, `ensureHydrated()` first, `c_…` migrates to a room on next save), and `collections-matrix.ts` mirrors `graphs-matrix.ts` with its own `app.queercurves.collection.*` event types — distinct types are what keep collections out of `listMatrixGraphs()` and vice versa. Collection rooms deliberately have **no `m.room.name`** (THREATS.md §7 rule 3).
+
 ### Domain model
 
 `src/lib/types.ts` is the code-side mirror of `data_model.md` §1–§10. `Graph` is a discriminated union on `type`, with three families:

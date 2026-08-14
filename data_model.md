@@ -375,11 +375,95 @@ Full Matrix protocol mapping lives in `sharing_model.md`. High-level:
   - `app.queercurves.tombstone` — soft revocation / graph deletion marker.
 - Matrix room state events are **not** used for graph data. Reason: state events in encrypted rooms are not themselves encrypted by default; the homeserver would see graph_def in plaintext, defeating E2EE for sensitive labels.
 
+## 10a. Collections and merging (multi-graph views)
+
+Two distinct answers to "I want to look at these graphs together". They share one implementation (`store/compose.ts`) and differ only in whether the result is persisted.
+
+(Numbered 10a rather than 11 so the existing §11–§13 cross-references in this document, in `CLAUDE.md`, and in code comments stay valid.)
+
+### 10a.1 Merging
+
+**Merge** takes N graphs and produces **one new graph** containing their combined data. It is **non-destructive**: the sources are neither modified nor deleted, so the undo for a merge is deleting the result. The output is an ordinary Graph at the current `schema_version` — no new event types, no new storage, importable by any client that could read the sources.
+
+Merge is only defined for graphs of the same `type`, and for spectrum graphs only when `dimensions` match. Everything else is a warning, not a refusal, because only the user knows whether two similarly-shaped graphs mean the same thing.
+
+**Pronoun cards (§5) are not composable**, by either mode. A card's preference scale is per-graph and user-labeled precisely so the app's vocabulary stays out of the user's mouth (§13 decision 7); combining two cards would mean deciding that one card's "okay" is the same step as another's "only if we're close", which is us inventing words for someone. Both the merge picker and the collection picker refuse them with that reason stated. Reconciling two scales is a real feature, but it needs the user to say how — not a default.
+
+Reconciliation rules:
+
+| Aspect | Rule |
+|---|---|
+| Axis names, labels, theme, customization | Taken from the **first** graph in the user's chosen order. Divergence is surfaced as a warning. |
+| Axis `range` | **Union** (`min` of mins, `max` of maxes). Coordinates are never rescaled — rescaling would silently change what a stored position means. |
+| Axis waypoints | Union, deduped by (position, label). |
+| Datapoints | Union, deduped by (timestamp, coordinates) so re-merging is idempotent rather than doubling. Sorted by timestamp. |
+| Element ids (datapoints, regions, waypoints, views, nodes, edges) | Kept as-is; **only collisions** are rewritten (`id~2`). Merging a single graph is therefore an identity operation on its ids. |
+| Provenance | Each datapoint gains a `from:<graph name>` tag when there is more than one source. |
+| Network nodes | Unified by `subject_ref` when set, otherwise by case- and whitespace-insensitive `label`. First occurrence wins; later ones only fill gaps. |
+| Network `link_status` | **Most restrictive wins** — any `denied` ⇒ `denied`; otherwise anything short of unanimous `confirmed` ⇒ `pending`. A merge must never manufacture consent (§4.1). |
+| Network edges | Endpoints remapped onto unified nodes, then deduped by (endpoints, type_id) — with endpoints order-normalised for undirected edges. Edges with a missing endpoint are dropped, not left dangling. |
+| Edge types | Union by id; first definition of a reused id wins, with a warning. |
+
+### 10a.2 Collections
+
+A **collection** is a saved list of graph ids that should be *rendered* together — a multi-graph view. It stores references, never copies:
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | `c_…` locally, room id when Matrix-backed |
+| `kind` | `"collection"` | discriminates from a Graph in storage and in the snapshot payload |
+| `name`, `description` | string | user-set |
+| `created_at`, `modified_at`, `schema_version`, `owner` | | as §2 |
+| `members` | list of `{ graph_id, color?, label? }` | ordered; `color` is the series colour and doubles as the legend key |
+| `view` | `SpectrumView` | optional remembered projection |
+
+Opening a collection loads each member through the ordinary graph store, composes them with the merge rules above (with `colorBySource` on, so each member's points carry its series colour), and hands the throwaway result to the normal renderer. Nothing composed is ever written down. Consequences, all deliberate:
+
+- edits to a member appear the next time the collection is opened;
+- members stay independently editable, shareable and revocable;
+- deleting a collection deletes only the list;
+- a member that can't be loaded — deleted, or shared from an account whose megolm keys haven't arrived — is **named in the UI**, never silently omitted. A view that quietly drops data is a view that lies.
+
+Collections are personal in v1: they are not shareable, and inviting someone to a collection is not a thing you can do. Sharing a *view over other people's graphs* raises the consent questions in `sharing_model.md` §12 without any of the machinery to answer them.
+
+### 10a.3 Custom axes (cross-graph plotting)
+
+The combined mode above lays every member onto **shared** axes: it reads axis 0 as axis 0 for everybody, so it needs the members to agree about dimensionality and about what each axis means. That covers "the same kind of graph, several people" and nothing else.
+
+A collection's second mode, **custom axes**, binds each visual channel to one specific `(member, axis)` pair instead:
+
+| Field | Type | Notes |
+|---|---|---|
+| `x` | `'time'` \| `{ member, axis }` | horizontal channel |
+| `y` | list of `{ member, axis }` | one entry per plotted series |
+
+This makes three shapes expressible that the combined mode cannot represent at all:
+
+- `x: 'time'`, `y: [{m0, stress}, {m1, stress}]` — two people's stress over time, **even when their graphs have different numbers of axes**;
+- `x: {m0, stress}`, `y: [{m0, libido}]` — correlation between two axes of one graph;
+- `x: {m0, stress}`, `y: [{m1, stress}]` — one person's axis against another's.
+
+Because it reads *named* axes rather than positional ones, dimensionality no longer has to match. A collection therefore accepts members the combined mode refuses; the mismatch is reported as a warning pointing at this mode, not as an error. Mixing a spectrum with a network graph is still fatal — a network has no axes to plot.
+
+**The time join.** When both channels are axes, the two sides were recorded at different moments, and exact timestamp matches are vanishingly rare, so an inner join would produce an empty plot. Points are paired by **last-observation-carried-forward**: at each timestamp either side supplies, the other channel contributes its most recent value at or before that moment. Timestamps before both series have started are dropped. This treats a recorded value as standing until the next one replaces it — which is what these graphs mean — but it *is* an approximation rather than a simultaneous measurement, and the UI says so above the chart.
+
+This is the "computed projections between distinct axis systems" that §10 deferred, **scoped to reading named axes**. It still does not *transform* one axis system into another — no rotation, no derived coordinates, no rescaling. Values are read exactly as stored.
+
+### 10a.4 Matrix encoding
+
+A collection lives in its own E2EE room, same whole-snapshot protocol as graphs, with its own event types so the two kinds never appear in each other's listings:
+
+- `app.queercurves.collection.marker` — state event identifying the room
+- `app.queercurves.collection.snapshot` — the whole `GraphCollection`
+- `app.queercurves.tombstone` — shared with graphs; deletion
+
+Unlike graph rooms, a collection room is created **without an `m.room.name`**. Room names are unencrypted state and a collection's name ("me and Sam") is exactly the kind of label §7 rule 3 of `THREATS.md` keeps out of plaintext. The name travels in the encrypted snapshot instead.
+
 ## 11. Out of scope for v1
 
 Explicitly deferred (acknowledged but not implemented in MVP):
 
-- **Computed projections between distinct axis systems.** Multiple presentation views of the same data are now first-class (§3.6, §6), but transforming the same canonical state into a *different* axis system (e.g. one gender state projected onto both an "agender↔non-binary × agender↔women" plane and a "genderness × women-to-enby" plane with computed mapping) still requires maintaining two graphs by hand.
+- **Computed projections between distinct axis systems.** Partially addressed: a collection's custom-axes mode (§10a.3) can now *read* any named axis of any member and plot it against any other, including across graphs and across dimensionalities. What remains deferred is *transforming* one axis system into another — e.g. projecting one gender state onto both an "agender↔non-binary × agender↔women" plane and a "genderness × women-to-enby" plane via a computed mapping. Values are read as stored; no rotation or derived coordinates.
 - **3D regions.** 3D scatter datapoints are reachable in v1; labeled 3D regions (boxes, volumes) are not.
 - **Network graph history.** Network state is point-in-time in v1.
 - **Pronoun-card history.** A card is point-in-time too (§5.6). "My pronouns over time" is a v2 feature alongside network history.
@@ -561,3 +645,20 @@ The example sentences under `pn1` render as "They go to the parade every year." 
 
 11. **Other people's names are hidden on screen by default** (§4.1). Hidden means *no label*, not a pseudonym — positional placeholders ("Person 1") were tried and rejected, because a stable handle is still something a viewer can screenshot and talk about. The viewer's own node is marked "You", and reveal is press-and-hold, never a sticky toggle. Presentation-layer only — no change to what is stored or shared.
 12. **`is_self` added to nodes** as an additive optional field (§4.1). No `schema_version` bump for that field on its own: per §9 additive optional fields don't bump, and an older client that ignores it simply masks every node including the owner's — which fails towards *more* privacy, not less. (The version did move to 2 in the same release, for the new pronoun-card family — see decision 9.)
+
+**2026-08-14** — combining graphs (§10a):
+
+13. **"Show together" and "make into one" are separate features, not one with a flag.** Collections reference; merging copies. Conflating them would force one answer to "what happens when a member changes?" onto both.
+14. **Merging is non-destructive.** Sources are never modified or deleted. Most tools consume their inputs when merging; this one doesn't, so the operation is always undoable by deleting the result.
+15. **Combining never rescales coordinates.** Divergent axis ranges union; a point keeps the number it was recorded with. Rescaling would silently restate what a user said about themselves.
+16. **Combining takes the most restrictive consent state**, and any `denied` wins outright. Merging must not be a laundering path for a `subject_ref` link that was never confirmed.
+17. **Collections are not shareable in v1.** Sharing a view over graphs you don't own is a consent question `sharing_model.md` §12 doesn't yet answer.
+18. **Neither feature bumps `schema_version`.** A merged graph is an ordinary Graph at whatever version its sources were, and `GraphCollection` / `CollectionView` are additive new shapes rather than changes to existing ones — so per §9 there is nothing for an old client to misrender. (The version did move to 2 in the same release, for the pronoun-card family — see decision 9.)
+
+**2026-08-14** — cross-graph axis plotting (§10a.3):
+
+19. **A visual channel binds to (member, axis), not to an axis index.** Positional axes can only express "these graphs are the same shape"; naming the axis is what makes "my stress vs their stress" and "stress vs libido" possible, and it drops the requirement that members share a dimensionality.
+20. **Mismatched dimensionality is a warning for collections, an error for merges.** Custom axes plots such members fine; the combined mode genuinely cannot lay them out. One check per mode, not one shared verdict.
+21. **Cross-axis points are paired by last-observation-carried-forward, and the UI says so.** Exact timestamp matches between two independently-kept graphs are vanishingly rare, so an inner join would show an empty chart. Carrying the last value forward matches what these graphs mean, but it is an approximation and must not be presented as a simultaneous reading (THREATS.md §7 rule 13).
+22. **Reading axes is not transforming them.** Custom axes reads stored values only — no rescaling, rotation, or derived coordinates — so a plot never restates what the user recorded.
+23. **Pronoun cards are excluded from combining, explicitly rather than silently.** Their preference scales are user-authored (decision 7), so mapping one card's levels onto another's would put our words in the user's mouth — the exact failure decision 7 exists to prevent. The pickers refuse with that reason shown. Scale reconciliation is deferred until the user specifies it.

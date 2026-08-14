@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { fixtures, type Graph } from '$lib';
+	import { fixtures, type Graph, type GraphCollection } from '$lib';
+	import { listCollections } from '$lib/store/collections.js';
 	import { palettes } from '$lib/presets/palettes.js';
 	import {
 		acceptInvite,
@@ -16,6 +17,7 @@
 
 	const fixtureGraphs: Graph[] = fixtures.allFixtures;
 	let userGraphs = $state<Graph[]>([]);
+	let collections = $state<GraphCollection[]>([]);
 	let invites = $state<PendingInvite[]>([]);
 	let importInput: HTMLInputElement;
 	let importError = $state<string | null>(null);
@@ -79,6 +81,12 @@
 			} catch (e) {
 				console.warn('listPendingInvites failed', e);
 				invites = [];
+			}
+			try {
+				collections = await listCollections();
+			} catch (e) {
+				console.warn('listCollections failed', e);
+				collections = [];
 			}
 		})();
 	});
@@ -201,6 +209,9 @@
 			<button type="button" class="cta secondary" onclick={() => importInput.click()}>
 				Import
 			</button>
+			{#if userGraphs.length >= 2}
+				<a class="cta secondary" href="/graphs/merge">Merge</a>
+			{/if}
 			<a class="cta" href="/graphs/new">+ new graph</a>
 		</span>
 	</h2>
@@ -241,6 +252,36 @@
 					<a href="/graphs/{graph.id}">
 						<strong>{graph.name}</strong>
 						<span class="muted">— {summarize(graph)}</span>
+					</a>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+
+	<h2>
+		Collections
+		<span class="cta-group">
+			<a class="cta" href="/collections/new">+ new collection</a>
+		</span>
+	</h2>
+	<p class="muted">
+		Several graphs on one chart — yours next to someone else's, or a set you keep separate on
+		purpose. Members aren't copied or combined; the collection just remembers what to show together.
+	</p>
+	{#if collections.length === 0}
+		<p class="muted">
+			No collections yet. <a href="/collections">What are these?</a>
+		</p>
+	{:else}
+		<ul class="graph-list">
+			{#each collections as c (c.id)}
+				<li>
+					<a href="/collections/{c.id}">
+						<strong>{c.name}</strong>
+						<span class="muted">
+							— {c.members.length}
+							{c.members.length === 1 ? 'graph' : 'graphs'}
+						</span>
 					</a>
 				</li>
 			{/each}

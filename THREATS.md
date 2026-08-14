@@ -398,3 +398,50 @@ A third graph family: pronouns and gender/address/relationship words, each rated
 **No new §6 entries.** Every residual item above is an instance of a non-defense already listed there (decrypted-data retention, screenshots, coerced cooperation).
 
 **Follow-up (not v1, tracked in §9):** the share dialog should carry a card-specific honest-disclosure line covering the two points above — rule 13 is only partially met until it does. The generic share-dialog copy does not currently say "the version they see is the version they keep."
+
+**2026-08-14** — **merging graphs**, **collections** (multi-graph views) and **cross-graph axis plotting** (`data_model.md` §10a). No new §6 entry and no §7 violation, but cross-graph plotting genuinely sharpens T4 by making correlation cheap. Written up per §8 in §11.
+
+### 2026-08-14 — merging graphs and collections (multi-graph views)
+
+Feature: `data_model.md` §10a. Merge combines N graphs into one new graph; a collection saves a list of graph ids and renders them on one chart without copying anything.
+
+**Threats touched.**
+
+- **T6 (non-consensual naming via `subject_ref`)** — the sharp edge. Merging two network graphs could otherwise upgrade a `pending` or absent consent state into `confirmed` just by unifying two nodes for the same person. Mitigated: consent states combine to the *most restrictive* value, and any `denied` wins outright (§7 rule 1). A merge can only ever narrow a link, never widen one.
+- **T4 (pattern inference by long-term viewers)** and **T5 (identity-history exposure)** — a merged graph concentrates data that was previously spread across several graphs with several separate share lists. One later share decision now exposes everything the merge pulled in. Mitigated by disclosure rather than prohibition: merging graphs owned by someone else raises an explicit, uncollapsed warning that the result is owned by *you* and re-sharing it re-shares their data under your name.
+- **T15 (UX-induced unintended sharing or wrong revocation)** — "merge" conventionally consumes its inputs. If users assumed that here, they'd expect the sources' share lists to be gone. Mitigated: the operation is non-destructive and both the merge page and the collection page say so in plain language.
+- **T7 (homeserver social-graph reconstruction)** — collections add one room per collection, and its membership is the owner alone. Marginal: the homeserver learns that an account has N+1 private rooms rather than N. No new correlation between *accounts* is created, because collections are not shareable.
+- **T1 (coerced disclosure)** and **T16 (future-self regret)** — unchanged in kind. A collection is one more artifact that can be opened under duress, but it holds no data of its own; deleting it destroys nothing.
+
+**Adversary capability.** No adversary gains a new capability. A homeserver operator sees additional room-creation events with an opaque `app.queercurves.collection.*` type and no readable content. Nothing new is published to anyone who wasn't already a member of the underlying graph rooms — neither feature invites, shares, or transmits to any new party.
+
+**Against §7 design rules.**
+
+- Rule 1 (least sharing): honoured. Collections are personal, non-shareable in v1; merging shares nothing by itself; cross-owner composition warns.
+- Rule 3 (no plaintext labels): honoured, and slightly *improved* on the existing baseline — collection rooms are created with no `m.room.name`, so the name lives only in the encrypted snapshot. Graph rooms still set a plaintext name; that is pre-existing and tracked in §9, not something this feature widens.
+- Rule 4 (distinct revocation verbs): honoured. Deleting a collection is explicitly labelled as removing only the list; deleting a merged graph is an ordinary graph deletion and does not touch the sources.
+- Rule 10 (encrypt at rest): honoured on the Matrix path. Collections written by a logged-out session land in plain `localStorage`, exactly like graphs do today, and migrate into an encrypted room on the next save once crypto is ready. Same known gap as graphs, no wider (`STACK.md` §6).
+- Rule 12 (schema versioning): honoured. Neither feature changes an existing shape, so `SCHEMA_VERSION` stays put; a client that doesn't know `app.queercurves.collection.*` simply doesn't see collections, which is the correct fail-safe.
+- Rule 13 (honest disclosure): honoured. Compatibility problems, foreign ownership, and unloadable members are all shown in full and never collapsed behind a details toggle.
+
+**Residual risk, in user terms.** Merging someone else's graph into yours makes a copy that they cannot revoke. If they later withdraw the original from you, your merged copy still has their data in it, and the warning at merge time is the only thing standing between that and an accidental re-share. This is the same honest-physics limit as T2 — once data has been decrypted on your device, it is out of the sender's control — and merging simply makes it easy to act on. No new §6 entry is required: this is T2 as already documented, not a new class of thing we decline to defend against.
+
+### 2026-08-14 — cross-graph axis plotting
+
+Feature: `data_model.md` §10a.3. A collection view can bind each visual channel to one specific `(member, axis)` pair, so any axis of any member plots against any other — including one person's axis against another's, paired over time.
+
+**Threats touched.**
+
+- **T4 (pattern inference by long-term viewers)** — this is the one the feature genuinely sharpens. Correlating two graphs is *precisely* an inference tool: "your libido tracks your stress", "your mood follows your partner's". Someone with read access to two of your graphs could already have eyeballed this; the feature makes it one dropdown. Two things bound it. First, it reads only graphs already in the viewer's collection, so it grants **no new access** — it surfaces inferences from data the viewer could already see. Second, collections are personal and non-shareable, so a correlation cannot be published as an artifact in its own right. The honest position is that this lowers the effort of an inference that was always available, and that is a real change even though the access boundary is unmoved.
+- **T5 (identity-history exposure)** — unchanged in reach. No new data is read, transmitted, or stored; the plot is composed in memory on each open and thrown away.
+- **T15 (UX-induced misreading)** — new, and specific to the time join. Pairing two independently-recorded graphs by carrying the last value forward produces a chart that *looks* like simultaneous measurement. Presented uncaveated it would invite conclusions the data doesn't support. Mitigated by a permanent note above the chart whenever the join is in play, saying in plain words that each point pairs a reading with the other graph's most recent value and that this is an approximation.
+
+**Adversary capability.** None gains anything. No new events, no new rooms, no new network traffic — a `CollectionView` is a few integers inside the collection snapshot that was already encrypted. An adversary who can read the collection could already read the member graphs it names.
+
+**Against §7 design rules.**
+
+- Rule 1 (least sharing): honoured — nothing is shared; the mode reads graphs the viewer already has.
+- Rule 12 (schema versioning): honoured — `CollectionView` is additive and optional; a client that doesn't understand it falls back to the combined mode.
+- Rule 13 (honest disclosure): this is the rule doing the work. The join caveat is not collapsible and not a tooltip, and the mode's own description says what it does before the user builds anything. The feature also *reads* values only — no rescaling or derived coordinates — so a plot never restates what the user recorded.
+
+**Residual risk, in user terms.** Putting someone else's graph in a collection alongside yours makes correlations between your lives easy to produce and easy to screenshot. That is the point of the feature and also its hazard: a chart claiming "their mood drives mine" is persuasive, shareable as an image, and built on a carry-forward approximation rather than paired measurements. The caveat text is the only thing travelling with the chart, and it does not survive a screenshot — the same limitation as T3, and no new §6 entry is needed for it.
