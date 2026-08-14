@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	findLatestGraph,
+	graphRoomCreateOptions,
 	MARKER_EVENT,
 	SNAPSHOT_EVENT,
 	TOMBSTONE_EVENT,
@@ -134,5 +135,75 @@ describe('findLatestGraph', () => {
 			event({ type: 'm.room.member' })
 		];
 		expect(findLatestGraph(events)?.name).toBe('newer');
+	});
+});
+
+describe('graphRoomCreateOptions', () => {
+	const opts = graphRoomCreateOptions();
+	const state = (type: string) => opts.initial_state.find((s) => s.type === type);
+	const pl = opts.power_level_content_override as {
+		users_default: number;
+		events_default: number;
+		state_default: number;
+		invite: number;
+		kick: number;
+		events: Record<string, number>;
+	};
+
+	// THREATS.md §7 rule 3 / sharing_model.md §2.2. The graph title is a
+	// sensitive label ("my gender", "alcohol") and m.room.name is not
+	// encrypted, so the payload must carry no name, topic, or avatar at all.
+	it('sets no plaintext room name, topic, or avatar', () => {
+		expect(opts).not.toHaveProperty('name');
+		expect(opts).not.toHaveProperty('topic');
+		expect(state('m.room.name')).toBeUndefined();
+		expect(state('m.room.topic')).toBeUndefined();
+		expect(state('m.room.avatar')).toBeUndefined();
+	});
+
+	it('enables megolm encryption at creation', () => {
+		expect(state('m.room.encryption')?.content).toEqual({
+			algorithm: 'm.megolm.v1.aes-sha2'
+		});
+	});
+
+	// sharing_model.md §8.1: current-only is the default grant, enforced at
+	// the server as well as by megolm — a joiner is not offered ciphertext
+	// from before their join.
+	it('restricts history visibility to joined members', () => {
+		expect(state('m.room.history_visibility')?.content).toEqual({
+			history_visibility: 'joined'
+		});
+	});
+
+	it('marks the room as ours so listing can filter without decrypting', () => {
+		expect(state(MARKER_EVENT)?.content).toEqual({ v: 1 });
+	});
+
+	// sharing_model.md §9.1. events_default is the entry that actually bites:
+	// in an E2EE room the server only sees m.room.encrypted, so a viewer left
+	// at the preset's events_default of 0 could publish their own snapshot and
+	// every other viewer's findLatestGraph would treat it as the graph.
+	it('lets nobody but the owner write to the room', () => {
+		expect(pl.users_default).toBe(0);
+		expect(pl.events_default).toBe(100);
+		expect(pl.state_default).toBe(100);
+		expect(pl.events['m.room.encrypted']).toBe(100);
+	});
+
+	it('keeps membership and the app event types owner-only', () => {
+		expect(pl.invite).toBe(100);
+		expect(pl.kick).toBe(100);
+		for (const type of [SNAPSHOT_EVENT, TOMBSTONE_EVENT, MARKER_EVENT]) {
+			expect(pl.events[type]).toBe(100);
+		}
+	});
+
+	// Rule 3 again, from the other side: a viewer must not be able to *add* a
+	// plaintext label to a room they can see.
+	it('keeps the plaintext-metadata state events owner-only', () => {
+		for (const type of ['m.room.name', 'm.room.topic', 'm.room.avatar']) {
+			expect(pl.events[type]).toBe(100);
+		}
 	});
 });

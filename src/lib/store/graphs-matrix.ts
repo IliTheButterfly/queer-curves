@@ -20,6 +20,82 @@ export const MARKER_EVENT = 'app.queercurves.marker';
 export const SNAPSHOT_EVENT = 'app.queercurves.snapshot';
 export const TOMBSTONE_EVENT = 'app.queercurves.tombstone';
 
+/**
+ * The `createRoom` payload for a graph room. Pure so the security-relevant
+ * parts are testable without a homeserver — see graphs-matrix.test.ts.
+ *
+ * Three things here are load-bearing for the threat model, not stylistic:
+ *
+ *  1. **No `name`.** `m.room.name` is unencrypted room state; the homeserver
+ *     reads it. A graph called "my gender" or "alcohol" in room state is an
+ *     outing primitive on its own (`sharing_model.md` §2.2, `THREATS.md` §7
+ *     rule 3). The title lives in the encrypted snapshot only. Topic and
+ *     avatar are left unset for the same reason.
+ *  2. **Power levels.** `sharing_model.md` §9.1: only the owner may post
+ *     snapshots/tombstones/markers or change membership. Without the
+ *     override, `private_chat` leaves `events_default` at 0, so any invitee
+ *     could publish a snapshot that every other viewer's `findLatestGraph`
+ *     would then treat as the graph.
+ *     Note *which* entry does the work: in an E2EE room the server only sees
+ *     the outer `m.room.encrypted` type, so the per-type entries below can
+ *     never gate a timeline event. `events_default` (and the explicit
+ *     `m.room.encrypted`) is the enforceable control; the per-inner-type
+ *     entries are documentation plus a guard for the unencrypted-send path.
+ *     This is why §9.1's per-event-type table cannot be implemented as
+ *     written — see `SECURITY_PLAN.md` §4.3.
+ *  3. **`history_visibility: joined`.** The current-only default of
+ *     `sharing_model.md` §8.1 at the server level: a joiner is not even
+ *     offered the ciphertext of events from before their join, so a later
+ *     key leak can't retroactively become a history grant.
+ */
+export function graphRoomCreateOptions(): {
+	preset: string;
+	initial_state: { type: string; state_key: string; content: object }[];
+	power_level_content_override: object;
+} {
+	return {
+		preset: 'private_chat',
+		initial_state: [
+			{
+				type: 'm.room.encryption',
+				state_key: '',
+				content: { algorithm: 'm.megolm.v1.aes-sha2' }
+			},
+			{
+				type: 'm.room.history_visibility',
+				state_key: '',
+				content: { history_visibility: 'joined' }
+			},
+			{
+				type: MARKER_EVENT,
+				state_key: '',
+				content: { v: 1 }
+			}
+		],
+		power_level_content_override: {
+			users_default: 0,
+			events_default: 100,
+			state_default: 100,
+			invite: 100,
+			kick: 100,
+			ban: 100,
+			redact: 100,
+			events: {
+				'm.room.encrypted': 100,
+				[SNAPSHOT_EVENT]: 100,
+				[TOMBSTONE_EVENT]: 100,
+				[MARKER_EVENT]: 100,
+				'm.room.name': 100,
+				'm.room.topic': 100,
+				'm.room.avatar': 100,
+				'm.room.encryption': 100,
+				'm.room.history_visibility': 100,
+				'm.room.power_levels': 100
+			}
+		}
+	};
+}
+
 /** Minimal shape of a matrix-js-sdk MatrixEvent that findLatestGraph cares about. */
 export interface SnapshotScanEvent {
 	getType(): string;
@@ -102,26 +178,14 @@ export async function saveMatrixGraph(graph: Graph): Promise<Graph> {
 	const client = requireClient();
 	const existing = graph.id ? client.getRoom(graph.id) : null;
 	if (existing) {
+		await scrubRoomName(client, existing.roomId);
 		await sendCustomEvent(client, existing.roomId, SNAPSHOT_EVENT, graph);
 		return { ...graph, id: existing.roomId };
 	}
 	// New graph — provision a Matrix room for it.
-	const res = await client.createRoom({
-		name: graph.name,
-		preset: 'private_chat',
-		initial_state: [
-			{
-				type: 'm.room.encryption',
-				state_key: '',
-				content: { algorithm: 'm.megolm.v1.aes-sha2' }
-			},
-			{
-				type: MARKER_EVENT,
-				state_key: '',
-				content: { v: 1 }
-			}
-		]
-	} as Parameters<typeof client.createRoom>[0]);
+	const res = await client.createRoom(
+		graphRoomCreateOptions() as unknown as Parameters<typeof client.createRoom>[0]
+	);
 	const roomId = res.room_id;
 	// `createRoom` resolves once the server has accepted the room, but the
 	// local client's room object — including its m.room.encryption state —
@@ -133,6 +197,39 @@ export async function saveMatrixGraph(graph: Graph): Promise<Graph> {
 	const stored: Graph = { ...graph, id: roomId };
 	await sendCustomEvent(client, roomId, SNAPSHOT_EVENT, stored);
 	return stored;
+}
+
+/**
+ * Clear `m.room.name` on a graph room we own.
+ *
+ * Rooms created before the room-name fix carry the user's graph title in
+ * unencrypted room state, where the homeserver (and every federated peer of
+ * every member) can read it. Deleting the event server-side is not possible,
+ * but overwriting the state with an empty name stops it being the *current*
+ * value — a homeserver that didn't already log the old value no longer has
+ * it. The leak of anything already recorded is not recoverable; that is
+ * called out in `SECURITY_PLAN.md` §3.1.
+ *
+ * Best-effort and silent: a viewer (power level 0) cannot set room state, and
+ * failing here must never block the user's save.
+ */
+async function scrubRoomName(
+	client: ReturnType<typeof requireClient>,
+	roomId: string
+): Promise<void> {
+	const room = client.getRoom(roomId);
+	if (!room) return;
+	const nameEvent = room.currentState.getStateEvents('m.room.name', '');
+	if (!nameEvent) return;
+	const ev = Array.isArray(nameEvent) ? nameEvent[0] : nameEvent;
+	const current = (ev?.getContent() as { name?: string } | undefined)?.name;
+	if (!current) return;
+	if (matrixGraphCreator(roomId) !== client.getUserId()) return;
+	try {
+		await client.setRoomName(roomId, '');
+	} catch (e) {
+		console.warn('[qc.matrix] could not clear plaintext room name for', roomId, e);
+	}
 }
 
 async function waitForEncryption(

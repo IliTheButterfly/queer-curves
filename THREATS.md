@@ -335,6 +335,7 @@ When closing a feature decision, append the outcome to a "feature-vs-threats" lo
 
 ## 9. Open items
 
+- **Implementation gaps against this document** are audited in `SECURITY_PLAN.md`, which registers ten of them and proposes four amendments to this file and `sharing_model.md` — including a new §7 rule on device trust. Two mitigations this document currently claims (default current-only grants, hard-kick key rotation) are **not implemented in the shipped code**; see `SECURITY_PLAN.md` §3 S3, S4, S5 before relying on T2/T4/T5's mitigation lines.
 - **§6 quantum entry**: revisit when Matrix ships post-quantum primitives. Currently a flagged future risk, not an active mitigation.
 - **§T16 bulk-deletion UX**: needed for "future-self protection" — deferred to v1.x.
 - **§T8 jurisdictional guidance**: the docs and onboarding should include honest guidance for users in hostile jurisdictions. Drafting deferred but flagged.
