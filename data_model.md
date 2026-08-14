@@ -157,7 +157,10 @@ A network graph represents relational data — most concretely, polycules.
 | `avatar_ref` | string | optional, opaque reference (URL or Matrix mxc) |
 | `subject_ref` | user reference | optional — links the node to an actual queer-curves user (subject to consent — see below) |
 | `link_status` | `"pending"` \| `"confirmed"` \| `"denied"` | required if `subject_ref` is set; tracks the consent state of the link |
+| `is_self` | bool | optional — marks the node as the graph owner. At most one node per graph should set it |
 | `position` | `{x, y}` | optional, user-set or layout-computed |
+
+**Name privacy.** A rendered network names real people, and the screen it's rendered on is the easiest leak in the model (`THREATS.md` T3). Clients therefore render every node *except* the viewer's own with **no label at all** by default — not a pseudonym, which would still be a handle a viewer could screenshot and reason about — and reveal real labels only while the viewer actively holds a control down. The viewer's own node is marked "You" so they can find themselves; the rest is shape without names. "Your own" node is the one with `is_self`, or the one whose `subject_ref` matches the signed-in account — `is_self` exists because a graph kept locally has no session to match against. This is a **presentation** rule, not a storage one: the labels are stored in full and shared in full with whoever is in the room. It defends against shoulder-surfing and casual screenshots, not against a viewer who has the data.
 
 **Consent for `subject_ref`.** Linking a node to a real user is sensitive — it publicly names that user as part of your network. Setting `subject_ref` triggers a consent request to the linked user; the link starts as `pending` and only becomes `confirmed` if the named user accepts. Clients SHOULD display non-confirmed links distinctly (e.g. dashed outline) and SHOULD NOT publish them in any view shared beyond the owner. The named user can withdraw consent at any time (transitions the link to `denied`), at which point the owner's client must remove or anonymize the link in published views. The protocol-level mechanism (Matrix to-device messaging for the consent handshake) is specified in `sharing_model.md`.
 
@@ -359,7 +362,7 @@ schema:
     - { id: "qpr",      label: "queerplatonic", color: "#80ffb0" }
 data:
   nodes:
-    - { id: "n1", label: "Alex", subject_ref: "@alex:..." }
+    - { id: "n1", label: "Alex", subject_ref: "@alex:...", is_self: true }
     - { id: "n2", label: "Bea" }
     - { id: "n3", label: "Cy" }
   edges:
@@ -391,3 +394,8 @@ Two graphs from the owner's perspective, two rooms in Matrix, two encrypted view
 3. **Timestamps are UTC**, display TZ is client-local (§3.4).
 4. **Graph deletion is hard.** Tombstone + kick all members + wipe local caches on compliant clients (§7.3). Soft revocation (just stop publishing) is a separate operation, defined in `sharing_model.md`.
 5. **Linking nodes to real users requires consent.** A node's `subject_ref` triggers a consent request; the link is `pending` until accepted, and the named user can withdraw at any time (§4.1). Cross-graph navigation from such nodes is deferred (§10).
+
+**2026-08-14** — network name privacy:
+
+6. **Other people's names are hidden on screen by default** (§4.1). Hidden means *no label*, not a pseudonym — positional placeholders ("Person 1") were tried and rejected, because a stable handle is still something a viewer can screenshot and talk about. The viewer's own node is marked "You", and reveal is press-and-hold, never a sticky toggle. Presentation-layer only — no change to what is stored or shared.
+7. **`is_self` added to nodes** as an additive optional field (§4.1). No `schema_version` bump: per §8 additive optional fields don't bump, and an older client that ignores it simply masks every node including the owner's — which fails towards *more* privacy, not less.

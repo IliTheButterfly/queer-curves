@@ -1,17 +1,26 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import type cytoscape from 'cytoscape';
-	import type { NetworkGraph } from '$lib/types.js';
+	import type { NetworkGraph, UserRef } from '$lib/types.js';
+	import { displayLabels } from './privacy.js';
 
 	let {
 		graph,
-		onPositionsChange
+		onPositionsChange,
+		reveal = false,
+		selfUserId = null
 	}: {
 		graph: NetworkGraph;
 		// Fires when the user drags a node to rest, or when an explicit
 		// re-layout finishes. Keys are node ids; values are layout
 		// coordinates from cytoscape (not viewport pixels).
 		onPositionsChange?: (positions: Record<string, { x: number; y: number }>) => void;
+		// Show real names instead of "Person N" placeholders. Held true only
+		// while the viewer holds the reveal button down — see privacy.ts.
+		reveal?: boolean;
+		// Matrix id of the signed-in user, so a node linked to that account
+		// counts as "you" and keeps its name.
+		selfUserId?: UserRef | null;
 	} = $props();
 
 	let containerEl: HTMLDivElement;
@@ -87,7 +96,7 @@
 		const initialLayout = pickLayout(graph);
 		cy = cytoscapeFn({
 			container: containerEl,
-			elements: buildElements(graph),
+			elements: buildElements(graph, currentLabels()),
 			style: buildStyle(),
 			layout: initialLayout,
 			// Default of 1.0 zooms uncomfortably fast on most trackpads/wheels.
@@ -117,17 +126,68 @@
 		const g = graph;
 		if (cy) {
 			cy.elements().remove();
-			cy.add(buildElements(g));
+			// untrack: `reveal` must not re-trigger this effect. Toggling names
+			// is a label swap (below), never a re-layout — the graph jumping
+			// around every time you press the reveal button would be awful.
+			cy.add(buildElements(g, untrack(currentLabels)));
 			cy.layout(pickLayout(g)).run();
 		}
 	});
+
+	$effect(() => {
+		// Swap labels in place when reveal flips. No layout, no re-add.
+		const labels = displayLabels(graph, { reveal, selfUserId });
+		if (!cy) return;
+		applyLabels(labels);
+	});
+
+	function currentLabels(): Record<string, string> {
+		return displayLabels(graph, { reveal, selfUserId });
+	}
+
+	function applyLabels(labels: Record<string, string>) {
+		if (!cy) return;
+		cy.batch(() => {
+			cy!.nodes().forEach((n) => {
+				const label = labels[n.id()];
+				if (label !== undefined) n.data('label', label);
+			});
+		});
+	}
+
+	// Render the graph to a PNG data URI **with real names visible**,
+	// regardless of the current reveal state. Callers are responsible for
+	// the consent gate in front of this (see NetworkExportDialog) — an
+	// exported image is the one artefact that leaves the app's control
+	// entirely, so it is never produced without an explicit confirmation.
+	export function exportPng(): string | null {
+		if (!cy) return null;
+		const wasRevealed = displayLabels(graph, { reveal, selfUserId });
+		try {
+			applyLabels(displayLabels(graph, { reveal: true, selfUserId }));
+			return cy.png({
+				full: true,
+				scale: 2,
+				// Matches --color-bg; a transparent PNG renders as black-on-black
+				// text in most viewers.
+				bg: '#1a1424'
+			});
+		} finally {
+			// Restore whatever the on-screen state was, so exporting while
+			// masked doesn't leave names on screen.
+			applyLabels(wasRevealed);
+		}
+	}
 
 	onDestroy(() => {
 		cy?.destroy();
 		cy = null;
 	});
 
-	function buildElements(g: NetworkGraph): cytoscape.ElementDefinition[] {
+	function buildElements(
+		g: NetworkGraph,
+		labels: Record<string, string>
+	): cytoscape.ElementDefinition[] {
 		const edgeTypes = new Map(g.schema.edge_types.map((et) => [et.id, et]));
 		const palette = g.customization.theme.palette;
 		const defaultNodeColor = g.customization.node_style?.default_color ?? palette[0] ?? '#c98aff';
@@ -136,8 +196,10 @@
 			...g.nodes.map((n): cytoscape.ElementDefinition => {
 				const elem: cytoscape.ElementDefinition = {
 					data: {
+						// Never the raw label — masking is the default, and the
+						// only source of truth for what's on screen is privacy.ts.
 						id: n.id,
-						label: n.label,
+						label: labels[n.id] ?? '',
 						color: n.color ?? defaultNodeColor
 					}
 				};

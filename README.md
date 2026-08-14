@@ -4,7 +4,7 @@ Privacy-respecting graphs for tracking and sharing identity over time. Built on 
 
 ## Status
 
-**Pre-development on the protocol side; usable locally.** The SvelteKit app runs end-to-end against `localStorage` — you can create graphs, drop datapoints, configure schemas, apply queer-flag palettes, and export/import JSON. Matrix integration (the actual sharing/federation layer the docs describe) hasn't started yet.
+**Early but end-to-end.** You can create graphs, drop datapoints, configure schemas, apply queer-flag palettes, and export/import JSON — locally against `localStorage`, or backed by a Matrix room with E2EE once you sign in and set up keys. Sharing works: invite someone and they get a read-only view of the same graph. Network graphs hide everyone's name but yours by default (hold the reveal button to show them; exporting an image asks you to confirm consent from each person named).
 
 Design docs:
 
