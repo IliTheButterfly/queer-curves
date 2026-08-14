@@ -211,6 +211,89 @@ export function chartWindow(series: BucketSeries, size?: number): ChartWindow {
 	return { buckets: all.slice(start, end), clipped: true, slid: true };
 }
 
+// Where an occurrence falls within its own shifted local day, as 0..1. This
+// is what lets the history render as a 24-hour track per day instead of a
+// flat list: position carries "when in the day", which a table row can only
+// state in words.
+export function dayFraction(d: Date, dayStartHour: number): number {
+	const start = dayStart(d, dayStartHour);
+	const f = (d.getTime() - start.getTime()) / 86_400_000;
+	// DST days are 23 or 25 hours long, so the nominal divisor can push this
+	// slightly outside the range. Clamp rather than letting a dot escape the
+	// track.
+	if (!Number.isFinite(f)) return 0;
+	return Math.min(1, Math.max(0, f));
+}
+
+export interface DaySubtotal {
+	counterId: string;
+	label: string;
+	unit: string;
+	color: string;
+	total: number;
+}
+
+export interface DayGroup {
+	key: string;
+	start: Date;
+	// Newest first within the day, matching the reverse-chronological list.
+	entries: Occurrence[];
+	subtotals: DaySubtotal[];
+}
+
+// Group occurrences into shifted local days, newest day first. `limit` caps
+// the number of *entries* considered (not days), so a long history can page
+// in without walking everything.
+export function groupByDay(graph: OccurrenceGraph, limit?: number): DayGroup[] {
+	const hour = dayStartHourOf(graph);
+	const palette = graph.customization.theme.palette;
+	const counters = graph.schema.counters;
+	const meta = new Map(
+		counters.map((c, i) => [
+			c.id,
+			{ label: c.label, unit: c.unit, color: counterColor(c, i, palette) }
+		])
+	);
+
+	const sorted = [...graph.occurrences].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+	const visible = limit === undefined ? sorted : sorted.slice(0, limit);
+
+	const out: DayGroup[] = [];
+	const byKey = new Map<string, DayGroup>();
+	for (const o of visible) {
+		const start = dayStart(new Date(o.timestamp), hour);
+		const key = start.toISOString();
+		let group = byKey.get(key);
+		if (!group) {
+			group = { key, start, entries: [], subtotals: [] };
+			byKey.set(key, group);
+			out.push(group);
+		}
+		group.entries.push(o);
+	}
+
+	for (const group of out) {
+		const totals = new Map<string, number>();
+		for (const o of group.entries) {
+			const amount = Number.isFinite(o.amount) ? o.amount : 0;
+			totals.set(o.counter_id, (totals.get(o.counter_id) ?? 0) + amount);
+		}
+		// Subtotals stay per counter — summing across units is meaningless.
+		group.subtotals = [...totals.entries()].map(([counterId, total]) => {
+			const m = meta.get(counterId);
+			return {
+				counterId,
+				label: m?.label ?? counterId,
+				unit: m?.unit ?? '',
+				color: m?.color ?? '#c98aff',
+				total
+			};
+		});
+	}
+
+	return out;
+}
+
 export interface CounterTotal {
 	counter: Counter;
 	count: number;

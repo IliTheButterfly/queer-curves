@@ -6,7 +6,9 @@ import {
 	chartWindow,
 	counterTotals,
 	currentBucketTotal,
+	dayFraction,
 	dayStart,
+	groupByDay,
 	formatAmount,
 	formatElapsed,
 	MAX_BUCKETS,
@@ -235,6 +237,82 @@ describe('chartWindow', () => {
 		const w = chartWindow(buildBuckets(g, 'day', new Date(2026, 7, 14)), 10);
 		expect(w.buckets).toEqual([]);
 		expect(w.slid).toBe(false);
+	});
+});
+
+describe('dayFraction', () => {
+	it('maps time-of-day onto 0..1 from midnight', () => {
+		expect(dayFraction(new Date(2026, 4, 7, 0, 0), 0)).toBeCloseTo(0);
+		expect(dayFraction(new Date(2026, 4, 7, 12, 0), 0)).toBeCloseTo(0.5);
+		expect(dayFraction(new Date(2026, 4, 7, 18, 0), 0)).toBeCloseTo(0.75);
+	});
+
+	it('measures from the shifted day start', () => {
+		// With a 4am start, 04:00 is the beginning of the track and 02:00 the
+		// following night is near its end.
+		expect(dayFraction(new Date(2026, 4, 7, 4, 0), 4)).toBeCloseTo(0);
+		expect(dayFraction(new Date(2026, 4, 8, 2, 0), 4)).toBeCloseTo(22 / 24);
+	});
+
+	it('stays within range', () => {
+		const f = dayFraction(new Date(2026, 4, 7, 23, 59), 0);
+		expect(f).toBeGreaterThanOrEqual(0);
+		expect(f).toBeLessThanOrEqual(1);
+	});
+});
+
+describe('groupByDay', () => {
+	it('groups newest day first with per-counter subtotals', () => {
+		const g = graph(
+			[beer, smoke],
+			[
+				occ('a', 'beer', at(2026, 5, 5, 20), 2),
+				occ('b', 'beer', at(2026, 5, 6, 21), 1),
+				occ('c', 'smoke', at(2026, 5, 6, 22), 3)
+			]
+		);
+		const groups = groupByDay(g);
+		expect(groups).toHaveLength(2);
+		expect(groups[0].start.getDate()).toBe(6);
+		expect(groups[0].entries).toHaveLength(2);
+		// Units are never mixed: one subtotal per counter, not one sum.
+		expect(groups[0].subtotals.map((s) => [s.label, s.total])).toEqual([
+			['cigarettes', 3],
+			['beer', 1]
+		]);
+		expect(groups[1].subtotals).toEqual([
+			expect.objectContaining({ label: 'beer', total: 2, unit: 'units' })
+		]);
+	});
+
+	it('honours day_start_hour when deciding which day an entry belongs to', () => {
+		const g = graph(
+			[beer],
+			[occ('a', 'beer', at(2026, 5, 5, 23)), occ('b', 'beer', at(2026, 5, 6, 2))],
+			{ day_start_hour: 4 }
+		);
+		expect(groupByDay(g)).toHaveLength(1);
+	});
+
+	it('caps by entry count, not day count', () => {
+		const g = graph(
+			[beer],
+			[
+				occ('a', 'beer', at(2026, 5, 1, 12)),
+				occ('b', 'beer', at(2026, 5, 2, 12)),
+				occ('c', 'beer', at(2026, 5, 3, 12))
+			]
+		);
+		const groups = groupByDay(g, 2);
+		expect(groups).toHaveLength(2);
+		expect(groups.flatMap((x) => x.entries)).toHaveLength(2);
+		// Newest two kept.
+		expect(groups[0].start.getDate()).toBe(3);
+	});
+
+	it('falls back to a palette colour when a counter sets none', () => {
+		const g = graph([beer], [occ('a', 'beer', at(2026, 5, 1, 12))]);
+		expect(groupByDay(g)[0].subtotals[0].color).toBe('#aaa');
 	});
 });
 

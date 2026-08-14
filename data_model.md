@@ -261,6 +261,18 @@ Targets are **advisory**. The app never blocks or warns off an entry; it reports
 
 Bars, not lines: occurrences are discrete counts inside a period, and a line between two buckets implies in-between values that never existed. Multiple counters stack within a bucket by default, or sit side by side (`bar_style.mode`). An optional rolling mean over N buckets (`bar_style.rolling_window`) gives the trend, which is what distinguishes a bad week from a bad direction.
 
+Bar width is capped, so a graph with one or two buckets shows a bar rather than a filled half-chart.
+
+### 4A.6 History as a timeline
+
+The entry history renders as a **timeline, not a table**: one row per shifted local day, each row a 24-hour track carrying a marker at the time each entry happened, sized by amount relative to the counter's step and coloured by counter. Day subtotals sit at the end of the row, per counter.
+
+The reason is that position carries information a list can only spell out in words — that Friday's four drinks were all after 10pm, that the coffees cluster at 9am, that a quiet week has a single marker in it. Reading a table of timestamps to recover the same shape is work the chart should be doing.
+
+Markers are focusable controls that open the entry for editing, and each day expands to a full list of its entries, so nothing is reachable only by hitting a small target. Hour labels follow the graph's own `day_start_hour` — a 4am-start day reads 04 → 10 → 16 → 22, not 00 → 06 → 12 → 18.
+
+Logging is the top of the page and backdating is folded away: opening a counting graph is almost always an intent to add to it, and a full entry form sitting open above the history makes the common case pay for the rare one.
+
 ## 5. Customization
 
 Common to every family:
