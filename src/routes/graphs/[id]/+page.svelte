@@ -396,6 +396,9 @@
 		{#if isUserGraph && !isEditable}
 			<p class="read-only-tag">
 				Shared with you — read-only. Only the original creator can change this graph.
+				{#if graph.projection?.grant === 'current'}
+					You're seeing the current state only; its history isn't shared with you.
+				{/if}
 			</p>
 		{/if}
 		{#if graph.description}

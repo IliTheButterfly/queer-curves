@@ -3,14 +3,25 @@
 		inviteToUserGraph,
 		listUserGraphMembers,
 		revokeGraphAccess,
-		type GraphMember
+		type GraphMember,
+		type ShareGrant
 	} from '$lib/store/graphs.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
+	import { loadContacts, parseFriendInput, type Contact } from '$lib/matrix/contacts.js';
 
 	let { graphId }: { graphId: string } = $props();
 
 	let members = $state<GraphMember[]>([]);
+	// The friends list is the primary invite path (sharing_model.md §3.1:
+	// Matrix syntax stays out of primary UI); the raw-id field is the
+	// power-user fallback, folded away.
+	let contacts = $state<Contact[]>([]);
+	let contactsLoaded = $state(false);
+	let selectedContactId = $state('');
 	let invitee = $state('');
+	// Least sharing is the default (THREATS.md §7 rule 1); history is the
+	// grant you opt into.
+	let grant = $state<ShareGrant>('current');
 	let submitting = $state(false);
 	let inviteError = $state<string | null>(null);
 	let inviteSuccess = $state<string | null>(null);
@@ -43,6 +54,24 @@
 		})();
 	});
 
+	$effect(() => {
+		if (!isShareable || contactsLoaded) return;
+		(async () => {
+			try {
+				contacts = (await loadContacts()).contacts;
+			} catch (e) {
+				console.warn('loadContacts failed', e);
+			} finally {
+				contactsLoaded = true;
+			}
+		})();
+	});
+
+	/** Prefer their name from YOUR friends list over raw Matrix syntax (§3.1). */
+	function displayNameOf(userId: string): string {
+		return contacts.find((c) => c.matrix_id === userId)?.display_name ?? userId;
+	}
+
 	async function handleInvite(e: SubmitEvent) {
 		e.preventDefault();
 		if (submitting) return;
@@ -50,9 +79,18 @@
 		inviteSuccess = null;
 		submitting = true;
 		try {
-			await inviteToUserGraph(graphId, invitee);
-			inviteSuccess = `Invited ${invitee.trim()} — they'll see this graph after they accept.`;
+			const selected = contacts.find((c) => c.id === selectedContactId) ?? null;
+			// A friend picked from the list wins; the folded manual field
+			// accepts a raw id or a pasted friend link.
+			const target = selected ? selected.matrix_id : parseFriendInput(invitee);
+			const who = selected ? selected.display_name : target;
+			await inviteToUserGraph(graphId, target, grant);
+			inviteSuccess =
+				grant === 'current'
+					? `Invited ${who} — they'll see the current state after they accept.`
+					: `Invited ${who} — they'll see this graph and its full history after they accept.`;
 			invitee = '';
+			selectedContactId = '';
 			members = await listUserGraphMembers(graphId);
 		} catch (e) {
 			inviteError = e instanceof Error ? e.message : String(e);
@@ -98,6 +136,21 @@
 				return membership;
 		}
 	}
+
+	function grantLabel(g: GraphMember['grant']): string {
+		switch (g) {
+			case 'owner':
+				return 'owner';
+			case 'current':
+				return 'current only';
+			case 'history':
+				return 'full history';
+			case 'legacy':
+				// Invited before per-grant rooms existed; they de facto hold
+				// full history, and pretending otherwise would be dishonest.
+				return 'full history (older share)';
+		}
+	}
 </script>
 
 <section class="share">
@@ -108,26 +161,57 @@
 			before inviting anyone.
 		</p>
 	{:else}
-		<!-- Honest disclosure (SECURITY_PLAN.md S4 interim): in the v1
-		     protocol every viewer receives the whole graph, history included.
-		     Until per-grant projections exist, saying anything softer would
-		     be lying about what an invite grants. -->
-		<p class="muted">
-			Inviting someone shares this graph <strong>including its full history</strong> — every datapoint
-			and entry ever recorded, not just the current state.
-		</p>
 		<form onsubmit={handleInvite}>
-			<label class="field">
-				<span class="label">Matrix user id</span>
-				<input
-					type="text"
-					bind:value={invitee}
-					placeholder="@bob:example.org"
-					autocomplete="off"
-					spellcheck="false"
-					disabled={submitting}
-				/>
-			</label>
+			{#if contacts.length > 0}
+				<label class="field">
+					<span class="label">Share with a friend</span>
+					<select bind:value={selectedContactId} disabled={submitting}>
+						<option value="">Choose a friend…</option>
+						{#each contacts as c (c.id)}
+							<option value={c.id}>{c.display_name}</option>
+						{/each}
+					</select>
+				</label>
+			{:else if contactsLoaded}
+				<p class="muted">
+					No friends yet — <a href="/friends">add friends</a> by swapping links, then share with them
+					by name.
+				</p>
+			{/if}
+			<details class="manual-invite">
+				<summary>Invite by Matrix id or friend link instead</summary>
+				<label class="field">
+					<span class="label">Matrix id or friend link</span>
+					<input
+						type="text"
+						bind:value={invitee}
+						placeholder="@bob:example.org"
+						autocomplete="off"
+						spellcheck="false"
+						disabled={submitting || selectedContactId !== ''}
+					/>
+				</label>
+			</details>
+			<!-- Honest disclosure per grant (THREATS.md §7 rules 1, 2, 13):
+			     least sharing is the default, history is a distinct ceremony,
+			     and each option says exactly what leaves your device. -->
+			<fieldset class="grant">
+				<legend class="label">What they can see</legend>
+				<label class="grant-option">
+					<input type="radio" bind:group={grant} value="current" disabled={submitting} />
+					<span>
+						<strong>Current state only</strong> — where things stand now. Past entries and their timing
+						stay yours.
+					</span>
+				</label>
+				<label class="grant-option">
+					<input type="radio" bind:group={grant} value="history" disabled={submitting} />
+					<span>
+						<strong>Full history</strong> — every datapoint and entry ever recorded, including when each
+						one happened. This can't be un-shared later.
+					</span>
+				</label>
+			</fieldset>
 			{#if inviteError}
 				<p class="error" role="alert">{inviteError}</p>
 			{/if}
@@ -135,7 +219,11 @@
 				<p class="success" role="status">{inviteSuccess}</p>
 			{/if}
 			<div class="actions">
-				<button type="submit" class="primary" disabled={submitting || !invitee.trim()}>
+				<button
+					type="submit"
+					class="primary"
+					disabled={submitting || (selectedContactId === '' && !invitee.trim())}
+				>
 					{submitting ? 'Inviting…' : 'Invite'}
 				</button>
 			</div>
@@ -143,10 +231,10 @@
 
 		{#if members.length > 0}
 			<ul class="member-list">
-				{#each members as m (m.userId)}
+				{#each members as m (`${m.roomId}:${m.userId}`)}
 					<li>
-						<span class="user-id">{m.userId}</span>
-						<span class="role">{labelFor(m.membership)}</span>
+						<span class="user-id" title={m.userId}>{displayNameOf(m.userId)}</span>
+						<span class="role">{grantLabel(m.grant)} · {labelFor(m.membership)}</span>
 						{#if m.userId !== selfUserId && (m.membership === 'join' || m.membership === 'invite')}
 							<button
 								type="button"
@@ -209,6 +297,30 @@
 	input:focus {
 		outline: none;
 		border-color: var(--color-accent);
+	}
+	select {
+		background: rgba(0, 0, 0, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-fg);
+		padding: var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+	}
+	select:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+	details.manual-invite {
+		margin-bottom: var(--space-2);
+	}
+	details.manual-invite summary {
+		font-size: 0.85em;
+		color: var(--color-muted);
+		cursor: pointer;
+		margin-bottom: var(--space-1);
+	}
+	.muted a {
+		color: var(--color-accent);
 	}
 	.error {
 		padding: var(--space-2) var(--space-3);
@@ -276,6 +388,26 @@
 	.small {
 		font-size: 0.85em;
 		margin: var(--space-2) 0 0;
+	}
+	fieldset.grant {
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 4px;
+		padding: var(--space-2) var(--space-3);
+		margin: 0 0 var(--space-2);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+	.grant-option {
+		display: flex;
+		gap: var(--space-2);
+		align-items: baseline;
+		font-size: 0.9em;
+		color: var(--color-fg);
+		cursor: pointer;
+	}
+	.grant-option input {
+		flex: none;
 	}
 	button.revoke {
 		background: transparent;

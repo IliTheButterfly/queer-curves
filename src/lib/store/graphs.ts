@@ -21,10 +21,11 @@ import {
 	matrixGraphCreator,
 	type PendingInvite,
 	revokeMatrixGraphAccess,
-	saveMatrixGraph
+	saveMatrixGraph,
+	type ShareGrant
 } from './graphs-matrix.js';
 
-export type { GraphMember, PendingInvite };
+export type { GraphMember, PendingInvite, ShareGrant };
 
 const STORAGE_KEY = 'queer-curves:user-graphs';
 
@@ -187,13 +188,17 @@ function requireMatrixId(id: string): void {
 	}
 }
 
-export async function inviteToUserGraph(graphId: string, userId: string): Promise<void> {
+export async function inviteToUserGraph(
+	graphId: string,
+	userId: string,
+	grant: ShareGrant = 'current'
+): Promise<void> {
 	await ensureHydrated();
 	requireMatrixId(graphId);
 	if (!shouldUseMatrix()) {
 		throw new Error('Log in and set up encryption to share graphs.');
 	}
-	await inviteToMatrixGraph(graphId, userId);
+	await inviteToMatrixGraph(graphId, userId, grant);
 }
 
 /**

@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
 	findLatestGraph,
 	graphRoomCreateOptions,
+	HEARTBEAT_MAX_AGE_MS,
 	isPlausibleGraphInvite,
+	latestAppEventTs,
 	MARKER_EVENT,
+	needsHeartbeat,
 	SNAPSHOT_EVENT,
 	TOMBSTONE_EVENT,
 	type SnapshotScanEvent
@@ -18,12 +21,14 @@ function event(opts: {
 	content?: unknown;
 	decryptionFailure?: boolean;
 	sender?: string;
+	ts?: number;
 }): SnapshotScanEvent {
 	return {
 		getType: () => opts.type,
 		getContent: () => opts.content ?? {},
 		isDecryptionFailure: () => opts.decryptionFailure ?? false,
-		getSender: () => opts.sender ?? OWNER
+		getSender: () => opts.sender ?? OWNER,
+		getTs: () => opts.ts ?? 0
 	};
 }
 
@@ -212,6 +217,38 @@ describe('isPlausibleGraphInvite', () => {
 	});
 });
 
+// SECURITY_PLAN.md S7: the weekly heartbeat decision.
+describe('heartbeat', () => {
+	const WEEK = HEARTBEAT_MAX_AGE_MS;
+	const now = 1_800_000_000_000;
+
+	it('fires only when the newest app event is older than the cadence', () => {
+		expect(needsHeartbeat(now - WEEK - 1, now)).toBe(true);
+		expect(needsHeartbeat(now - WEEK + 1, now)).toBe(false);
+		expect(needsHeartbeat(now, now)).toBe(false);
+	});
+
+	it('never fires for a room with no app events at all', () => {
+		// Nothing to re-send; a heartbeat here would invent traffic.
+		expect(needsHeartbeat(null, now)).toBe(false);
+	});
+
+	it('latestAppEventTs counts still-encrypted events as app events', () => {
+		// Timing is metadata: the decision must not change depending on
+		// whether decryption has caught up.
+		const events = [
+			event({ type: SNAPSHOT_EVENT, ts: 100 }),
+			event({ type: 'm.room.encrypted', decryptionFailure: true, ts: 200 }),
+			event({ type: 'm.room.member', ts: 300 })
+		];
+		expect(latestAppEventTs(events)).toBe(200);
+	});
+
+	it('latestAppEventTs is null for a timeline with no app events', () => {
+		expect(latestAppEventTs([event({ type: 'm.room.member', ts: 300 })])).toBeNull();
+	});
+});
+
 describe('graphRoomCreateOptions', () => {
 	const opts = graphRoomCreateOptions();
 	const state = (type: string) => opts.initial_state.find((s) => s.type === type);
@@ -252,6 +289,24 @@ describe('graphRoomCreateOptions', () => {
 
 	it('marks the room as ours so listing can filter without decrypting', () => {
 		expect(state(MARKER_EVENT)?.content).toEqual({ v: 1 });
+	});
+
+	// Stage 2: one share room per (graph × grant). The marker carries the
+	// variant and its parent so the owner's devices can find fan-out targets
+	// from state alone; everything else about a share room must be identical
+	// to a primary room — same encryption, same lockdown.
+	it('share rooms differ from primary rooms only in the marker', () => {
+		const share = graphRoomCreateOptions({ kind: 'current', parent: '!primary:hs' });
+		expect(share.initial_state.find((s) => s.type === MARKER_EVENT)?.content).toEqual({
+			v: 1,
+			variant: 'current',
+			parent: '!primary:hs'
+		});
+		const stripMarker = (o: ReturnType<typeof graphRoomCreateOptions>) => ({
+			...o,
+			initial_state: o.initial_state.filter((s) => s.type !== MARKER_EVENT)
+		});
+		expect(stripMarker(share)).toEqual(stripMarker(graphRoomCreateOptions()));
 	});
 
 	// sharing_model.md §9.1. events_default is the entry that actually bites:

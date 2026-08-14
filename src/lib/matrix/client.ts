@@ -303,6 +303,28 @@ async function startClient(session: MatrixSession): Promise<void> {
 	);
 	await _client.startClient({ filter });
 	await prepared;
+
+	// Headless probes assert on decrypted event *content* (a projection bug
+	// is invisible in the rendered UI). Dev builds only — never production.
+	if (import.meta.env.DEV) {
+		(globalThis as { __qcClient?: MatrixClient }).__qcClient = _client;
+	}
+
+	// Weekly heartbeat (SECURITY_PLAN.md S7): once per app open, after the
+	// catch-up syncs have had a chance to land, re-send any owned room whose
+	// newest app event is older than the cadence. Delayed so it never
+	// competes with initial decryption, and checked against the *current*
+	// client so a logout during the delay is a no-op.
+	const startedFor = _client;
+	setTimeout(() => {
+		if (_client !== startedFor) return;
+		void import('$lib/store/graphs-matrix.js')
+			.then((mod) => mod.sendHeartbeats())
+			.then((sent) => {
+				if (sent > 0) console.info(`[qc.matrix] heartbeat re-sent ${sent} room(s)`);
+			})
+			.catch((e) => console.warn('[qc.matrix] heartbeat sweep failed', e));
+	}, 20000);
 }
 
 /**
@@ -328,12 +350,27 @@ async function reshareSnapshotIfOurs(roomId: string): Promise<void> {
 		console.warn('[qc.matrix] re-share import failed', e);
 		return;
 	}
-	const marker = room.currentState.getStateEvents(mod.MARKER_EVENT, '');
+	const marker = mod.markerOf(room);
 	if (!marker) return;
-	const graph = mod.findLatestGraph(room.getLiveTimeline().getEvents(), mod.roomCreator(room));
-	if (!graph) return;
+	// Only the creator can (and should) re-send; a viewer watching someone
+	// else join has nothing to share and would only 403.
+	if (mod.roomCreator(room) !== _client.getUserId()) return;
 	try {
-		await mod.saveMatrixGraph({ ...graph, id: roomId });
+		if (marker.variant && marker.parent) {
+			// A share room: re-project from the primary so the joiner gets a
+			// snapshot at exactly their grant, never whatever happened to be
+			// in this room's timeline.
+			const primary = _client.getRoom(marker.parent);
+			const graph = primary
+				? mod.findLatestGraph(primary.getLiveTimeline().getEvents(), mod.roomCreator(primary))
+				: mod.findLatestGraph(room.getLiveTimeline().getEvents(), _client.getUserId());
+			if (!graph) return;
+			await mod.saveMatrixGraph({ ...graph, id: roomId });
+		} else {
+			const graph = mod.findLatestGraph(room.getLiveTimeline().getEvents(), _client.getUserId());
+			if (!graph) return;
+			await mod.saveMatrixGraph({ ...graph, id: roomId });
+		}
 	} catch (e) {
 		console.warn('[qc.matrix] re-share failed', e);
 	}

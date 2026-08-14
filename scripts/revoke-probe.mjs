@@ -65,12 +65,17 @@ async function createGraph(page, graphName) {
 	return page.url();
 }
 
-async function inviteAndAccept(a, b, graphUrl, bobMatrixId) {
+// Invites with the FULL HISTORY grant: this probe's leak assertion is "bob
+// must not see the post-kick datapoint", and under the default current-only
+// grant he'd see one datapoint either way, proving nothing.
+async function inviteAndAccept(a, b, graphUrl, bobMatrixId, graphName) {
 	await a.page.goto(graphUrl, { waitUntil: 'domcontentloaded' });
 	await a.page.locator('section.share').waitFor({ timeout: 10000 });
+	await a.page.locator('details.manual-invite summary').click();
 	await a.page.locator('input[placeholder="@bob:example.org"]').fill(bobMatrixId);
+	await a.page.locator('input[type="radio"][value="history"]').check();
 	await a.page.getByRole('button', { name: /^Invite$/ }).click();
-	await a.page.waitForSelector('p.success', { timeout: 10000 });
+	await a.page.waitForSelector('p.success', { timeout: 15000 });
 	await b.page.goto(`${DEV}/`, { waitUntil: 'domcontentloaded' });
 	let sawInvite = false;
 	for (let i = 0; i < 40 && !sawInvite; i++) {
@@ -81,6 +86,20 @@ async function inviteAndAccept(a, b, graphUrl, bobMatrixId) {
 	if (!sawInvite) throw new Error('bob never saw the invite');
 	await b.page.getByRole('button', { name: /^Accept$/ }).click();
 	await b.page.waitForTimeout(8000);
+	// Bob's copy lives in a share room with its own id (Stage 2) — find it
+	// from his own graph list.
+	await b.page.goto(`${DEV}/`, { waitUntil: 'domcontentloaded' });
+	let href = null;
+	for (let i = 0; i < 40 && !href; i++) {
+		await b.page.waitForTimeout(500);
+		href = await b.page
+			.locator(`main a:has-text("${graphName}")`)
+			.first()
+			.getAttribute('href')
+			.catch(() => null);
+	}
+	if (!href) throw new Error("bob's graph never appeared in his list");
+	return { bobUrl: `${DEV}${href}`, bobRoomId: decodeURIComponent(href.split('/graphs/')[1]) };
 }
 
 async function membershipOf(roomId, token, userId) {
@@ -103,16 +122,17 @@ try {
 	const bobMatrixId = `@${BOB}:localhost`;
 
 	// ── Part 1: revoke ────────────────────────────────────────────────
-	const graphUrl = await createGraph(a.page, `revocable-${ALICE}`);
+	const graphName = `revocable-${ALICE}`;
+	const graphUrl = await createGraph(a.page, graphName);
 	const roomId = decodeURIComponent(graphUrl.split('/graphs/')[1]);
 	log('alice created', roomId);
 	await a.page.getByRole('button', { name: /commit datapoint/i }).click();
 	await a.page.waitForTimeout(1500);
-	await inviteAndAccept(a, b, graphUrl, bobMatrixId);
-	log('bob accepted invite');
+	const { bobUrl, bobRoomId } = await inviteAndAccept(a, b, graphUrl, bobMatrixId, graphName);
+	log('bob accepted invite; his share room is', bobRoomId);
 
 	// bob reads the graph (1 datapoint expected)
-	await b.page.goto(graphUrl, { waitUntil: 'domcontentloaded' });
+	await b.page.goto(bobUrl, { waitUntil: 'domcontentloaded' });
 	let bobSaw = false;
 	for (let i = 0; i < 60 && !bobSaw; i++) {
 		await b.page.waitForTimeout(500);
@@ -133,15 +153,17 @@ try {
 	const aliceToken = await a.page.evaluate(
 		() => JSON.parse(localStorage.getItem('queer-curves:matrix-session') ?? '{}').accessToken
 	);
-	const afterRevoke = await membershipOf(roomId, aliceToken, bobMatrixId);
+	// The kick lands in bob's SHARE room — the primary never had him.
+	const afterRevoke = await membershipOf(bobRoomId, aliceToken, bobMatrixId);
 	log('bob membership after revoke (want leave):', afterRevoke);
 
 	// alice writes AFTER the kick — new megolm session must exclude bob
+	await a.page.goto(graphUrl, { waitUntil: 'domcontentloaded' });
 	await a.page.getByRole('button', { name: /commit datapoint/i }).click();
 	await a.page.waitForTimeout(2000);
 
 	// bob reloads; must not see 2 datapoints (nor the graph at all)
-	await b.page.goto(graphUrl, { waitUntil: 'domcontentloaded' });
+	await b.page.goto(bobUrl, { waitUntil: 'domcontentloaded' });
 	let bobLeaked = false;
 	for (let i = 0; i < 20; i++) {
 		await b.page.waitForTimeout(500);
@@ -154,10 +176,10 @@ try {
 	log('bob sees post-revoke datapoint (want false):', bobLeaked);
 
 	// ── Part 2: delete kicks members before leaving ───────────────────
-	const graphUrl2 = await createGraph(a.page, `deletable-${ALICE}`);
-	const roomId2 = decodeURIComponent(graphUrl2.split('/graphs/')[1]);
-	await inviteAndAccept(a, b, graphUrl2, bobMatrixId);
-	log('bob accepted invite to second graph');
+	const graphName2 = `deletable-${ALICE}`;
+	const graphUrl2 = await createGraph(a.page, graphName2);
+	const share2 = await inviteAndAccept(a, b, graphUrl2, bobMatrixId, graphName2);
+	log('bob accepted invite to second graph; share room', share2.bobRoomId);
 
 	await a.page.goto(graphUrl2, { waitUntil: 'domcontentloaded' });
 	await a.page.getByRole('button', { name: /^Delete$/ }).click();
@@ -173,10 +195,18 @@ try {
 			headers: { Authorization: `Bearer ${bobToken}` }
 		})
 	).json();
-	const bobStillJoined = (joined.joined_rooms ?? []).includes(roomId2);
-	log('bob still joined to deleted graph room (want false):', bobStillJoined);
+	// Deleting must sweep bob out of the share room; and after part 1's
+	// revoke, bob should be joined to nothing at all.
+	const bobStillJoined = (joined.joined_rooms ?? []).includes(share2.bobRoomId);
+	log('bob still joined to deleted graph share room (want false):', bobStillJoined);
+	log('bob joined_rooms after both parts (want []):', JSON.stringify(joined.joined_rooms ?? []));
 
-	const ok = bobSaw && afterRevoke === 'leave' && !bobLeaked && !bobStillJoined;
+	const ok =
+		bobSaw &&
+		afterRevoke === 'leave' &&
+		!bobLeaked &&
+		!bobStillJoined &&
+		(joined.joined_rooms ?? []).length === 0;
 	log(ok ? 'PROBE PASSED' : 'PROBE FAILED');
 	process.exitCode = ok ? 0 : 1;
 } finally {

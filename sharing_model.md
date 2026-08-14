@@ -81,7 +81,7 @@ Contacts are owner-private. They do not appear in any shared room. They are neve
 
 Three flows:
 
-1. **By share link.** A short URL that bundles a Matrix ID and an optional initial room invite. Format TBD; intent is to be QR-friendly. The receiving client opens the app, prompts to add the contact.
+1. **By share link.** A short URL that bundles a Matrix ID and an optional initial room invite. **Format (decided 2026-08-14): a `https://matrix.to/#/@user:server` URL** — QR-friendly, copy-pastable, and understood by the wider Matrix ecosystem. The receiving client accepts it pasted into the add-friend field (and, later, scanned as a QR code).
 2. **By Matrix ID.** Power-user fallback: paste `@user:server`.
 3. **By scanning a QR code** that another queer-curves user displays. (Same payload as share link.)
 
@@ -224,16 +224,17 @@ Until variants exist, the owner's only tool is graph-level scoping: keep the hon
 
 ## 8. History grants
 
+> **Amended 2026-08-14** (SECURITY_PLAN.md §4.1–§4.2). Under the v1 whole-snapshot protocol, §8.1's original mechanism was insufficient and §8.2's unnecessary: history lives in the *newest* event, so gating access to *old* events (`shared_history`, `history_visibility`, megolm's forward-only property) never gated history at all. As amended: a grant level is enforced by **which room a viewer is in and what is sent into it**. Each grant gets its own share room (§2.1's "one room per (graph × audience)"); the owner's client sends each room a **projection** of the graph for that room's grant (`store/projection.ts`), never the graph itself. §8.2's key-forwarding design is retained below as the model for a future event-stream protocol.
+
 ### 8.1 Default: current-only
 
-A new viewer's room membership is configured with `shared_history: false` for the room's Megolm sessions. They cannot decrypt past datapoints. They can only decrypt events sent after they joined plus the snapshot the owner posts on join.
+A new viewer is invited into a **current-only share room**, whose snapshots are projections containing only the graph's present state: the newest spectrum datapoint, per-counter interval totals with the per-entry log (and its timestamps) collapsed away, the network or card as it stands. The viewer cannot reconstruct history because the history is never sent to their room. The room is additionally configured with `history_visibility: joined` and unshared megolm history, as defence in depth.
 
 ### 8.2 Granting history
 
-When the owner toggles `view history` on for a viewer, the owner's client:
+A `view history` grant is implemented as a **projection choice**: the viewer is invited into the full-history share room, whose snapshots carry the whole record. Changing someone's grant means moving them between rooms — there is no key forwarding, no to-device traffic, and no dependency on SDK history-sharing behaviour. The grant is not *retroactive* over the room's old ciphertext; the viewer receives history as of the grant, which under a whole-snapshot protocol is the same thing.
 
-1. For each Megolm session corresponding to past datapoints in the room, sends the session key directly to the viewer's device(s) via Matrix's `m.forwarded_room_key` to-device message mechanism. This is the standard Matrix history-sharing mechanism, normally suppressed by `shared_history: false`.
-2. The viewer's client receives the keys, stores them in its crypto store, and on next sync can decrypt the historical events.
+For a future event-stream protocol (where history would live in old events rather than the newest one), the original design applies: forward past Megolm session keys via `m.forwarded_room_key` to-device messages, suppressed by default via `shared_history: false`.
 
 ### 8.3 What "history" means
 
@@ -427,6 +428,10 @@ Tabled for later discussion, not yet decided.
 2. **Snapshot heartbeat: weekly, unconditional** (§6.3). One snapshot per graph per week regardless of activity. The unconditional cadence prevents the homeserver from inferring user activity from snapshot timing.
 3. **Default homeserver: run one, recommend it** (with self-host always available). A public queer-curves homeserver will be operated by the project for users who don't self-host. Operational specifics (which homeserver implementation, federation policy, registration policy, T&Cs) deferred — user will provide further info later, will land in STACK.md / OPERATIONS.md when known.
 4. **Owner key backup is required at first login.** Onboarding flow mandates Matrix cross-signing + key backup setup before the user can create or receive any graphs. Without it, multi-device key sharing breaks and account recovery is impossible (§15.1 covers the recovery UX side, deferred). Skipping key backup setup is not offered as an option — the consequence (total data loss on device loss) is too severe to make optional.
+
+**2026-08-14 (later)** — §8 amended per SECURITY_PLAN.md §4.1–§4.2 (Stage 2):
+
+7. **Grant levels are rooms + projections, not key policy.** Under the v1 whole-snapshot protocol, history lives in the newest event, so `shared_history`/`history_visibility` never enforced current-only. Each grant now gets its own share room and receives a per-grant projection of the graph (`store/projection.ts`); the owner's primary room stays owner-only and is the only room carrying unconfirmed `subject_ref` links (§12). The original §8.2 key-forwarding design is retained as the model for a future event-stream protocol.
 
 **2026-08-14** — pronoun cards (`data_model.md` §5) added:
 
