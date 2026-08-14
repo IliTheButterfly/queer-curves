@@ -12,18 +12,22 @@
 		type OccurrenceBucket,
 		type OccurrenceGraph,
 		type PointWaypoint,
+		type PreferenceLevel,
+		type PronounsGraph,
 		type Region,
 		type SpectrumGraph,
 		type SpectrumView,
-		type TargetDirection
+		type TargetDirection,
+		type TermGroup
 	} from '$lib/types.js';
 	import { palettes, type Palette } from '$lib/presets/palettes.js';
 	import { generateGraphId } from '$lib/store/graphs.js';
+	import { DEFAULT_LEVELS, DEFAULT_TERM_GROUPS } from '$lib/graphs/pronouns/defaults.js';
 	import ColorPickerWithPalette from '$lib/ui/ColorPickerWithPalette.svelte';
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
 	import RegionEditor from '$lib/ui/RegionEditor.svelte';
 
-	type GraphType = 'spectrum' | 'network' | 'occurrence';
+	type GraphType = 'spectrum' | 'network' | 'occurrence' | 'pronouns';
 
 	let {
 		initial,
@@ -358,6 +362,78 @@
 		counters[counterIdx].presets = counters[counterIdx].presets.filter((_, i) => i !== presetIdx);
 	}
 
+	// ─── Pronoun-card form state ──────────────────────────────────────────
+	//
+	// The scale and the term groups are the card's schema: entries reference
+	// them by id, so ids are generated once and preserved across edits. A
+	// level or group can be removed while entries still point at it — the
+	// card keeps those entries visible under an "unsorted"/"ungrouped"
+	// heading rather than dropping user data (see graphs/pronouns/defaults).
+	let levels = $state<PreferenceLevel[]>(
+		untrack(() =>
+			initial?.type === 'pronouns'
+				? initial.schema.levels.map((l) => ({ ...l }))
+				: DEFAULT_LEVELS.map((l) => ({ ...l }))
+		)
+	);
+
+	let termGroups = $state<TermGroup[]>(
+		untrack(() =>
+			initial?.type === 'pronouns'
+				? initial.schema.term_groups.map((g) => ({ ...g }))
+				: DEFAULT_TERM_GROUPS.map((g) => ({ ...g }))
+		)
+	);
+
+	let displayName = $state(
+		untrack(() => (initial?.type === 'pronouns' ? (initial.display_name ?? '') : ''))
+	);
+	let pronounsLayout = $state<'level' | 'flat'>(
+		untrack(() =>
+			initial?.type === 'pronouns' ? (initial.customization.layout ?? 'level') : 'level'
+		)
+	);
+	let showExamples = $state(
+		untrack(() =>
+			initial?.type === 'pronouns' ? initial.customization.show_examples !== false : true
+		)
+	);
+
+	function slugId(prefix: string, label: string, used: Set<string>): string {
+		const base =
+			label
+				.toLowerCase()
+				.normalize('NFKD')
+				.replace(/[^a-z0-9]+/g, '-')
+				.replace(/^-|-$/g, '') || prefix;
+		let id = base;
+		let n = 2;
+		while (used.has(id)) id = `${base}-${n++}`;
+		return id;
+	}
+
+	function addLevel() {
+		const used = new Set(levels.map((l) => l.id));
+		levels.push({
+			id: slugId('level', `level ${levels.length + 1}`, used),
+			label: '',
+			color: selectedPalette.colors[levels.length % selectedPalette.colors.length]
+		});
+	}
+
+	function removeLevel(idx: number) {
+		levels = levels.filter((_, i) => i !== idx);
+	}
+
+	function addTermGroup() {
+		const used = new Set(termGroups.map((g) => g.id));
+		termGroups.push({ id: slugId('group', `group ${termGroups.length + 1}`, used), label: '' });
+	}
+
+	function removeTermGroup(idx: number) {
+		termGroups = termGroups.filter((_, i) => i !== idx);
+	}
+
 	function findMatchingPalette(colors: string[]): string {
 		for (const p of palettes) {
 			if (
@@ -609,6 +685,64 @@
 			} satisfies OccurrenceGraph;
 		}
 
+		if (type === 'pronouns') {
+			// Unlabeled rows are the editor's blank "+ add" state, not data.
+			const validLevels = levels
+				.filter((l) => l.label.trim() !== '')
+				.map((l) => ({ ...l, label: l.label.trim() }));
+			const validGroups = termGroups
+				.filter((g) => g.label.trim() !== '')
+				.map((g) => ({ ...g, label: g.label.trim() }));
+			// A card with no scale can't classify anything, so fall back to the
+			// defaults rather than persisting an unusable schema.
+			const schema = {
+				levels: validLevels.length > 0 ? validLevels : DEFAULT_LEVELS.map((l) => ({ ...l })),
+				term_groups: validGroups
+			};
+			const trimmedName = displayName.trim();
+
+			if (initial?.type === 'pronouns') {
+				return {
+					...initial,
+					name,
+					description: description || undefined,
+					modified_at: now,
+					schema_version: SCHEMA_VERSION,
+					schema,
+					...(trimmedName ? { display_name: trimmedName } : { display_name: undefined }),
+					customization: {
+						...initial.customization,
+						theme: { ...initial.customization.theme, palette: colors },
+						title: { show: true, text: name },
+						layout: pronounsLayout,
+						show_examples: showExamples
+					}
+				} satisfies PronounsGraph;
+			}
+
+			return {
+				id: generateGraphId(),
+				type: 'pronouns',
+				name,
+				description: description || undefined,
+				created_at: now,
+				modified_at: now,
+				schema_version: SCHEMA_VERSION,
+				owner: '@local:queer-curves',
+				editors: [],
+				schema,
+				...(trimmedName ? { display_name: trimmedName } : {}),
+				customization: {
+					theme: { palette: colors },
+					title: { show: true, text: name },
+					layout: pronounsLayout,
+					show_examples: showExamples
+				},
+				pronouns: [],
+				terms: []
+			} satisfies PronounsGraph;
+		}
+
 		const validEdgeTypes = edgeTypes.filter((et) => et.label.trim() !== '');
 
 		if (initial?.type === 'network') {
@@ -679,6 +813,15 @@
 					<small>
 						Counting things as they happen — drinks, doses, cigarettes, panic attacks, gym sessions.
 						One-tap logging, per-period totals, optional limits.
+					</small>
+				</span>
+			</label>
+			<label class="radio">
+				<input type="radio" bind:group={type} value="pronouns" />
+				<span>
+					<strong>Pronoun card</strong>
+					<small>
+						Pronouns and gender/address words, each rated on your own scale — a card you can share.
 					</small>
 				</span>
 			</label>
@@ -1135,6 +1278,94 @@
 				actually live by.
 			</p>
 		</fieldset>
+	{:else if type === 'pronouns'}
+		<label class="field">
+			<span class="label">
+				Name to use in examples <small>(optional)</small>
+			</span>
+			<input type="text" bind:value={displayName} placeholder="Ada" maxlength="60" />
+			<small class="hint">
+				Used in generated example sentences. Leave empty to keep the card name-free.
+			</small>
+		</label>
+
+		<fieldset>
+			<legend>Preference scale</legend>
+			<p class="hint">
+				The steps you'll sort pronouns and words into, strongest first. Yours to name — the defaults
+				follow the scale pronoun cards usually use.
+			</p>
+			{#each levels as level, i (level.id)}
+				<div class="level-row">
+					<input type="text" bind:value={level.label} placeholder="favourite" maxlength="40" />
+					<input
+						type="text"
+						bind:value={level.description}
+						placeholder="description (optional)"
+						maxlength="120"
+					/>
+					<ColorPickerWithPalette
+						bind:value={levels[i].color}
+						paletteColors={selectedPalette.colors}
+						ariaLabel="level colour"
+					/>
+					{#if levels.length > 1}
+						<button
+							type="button"
+							class="ghost remove"
+							onclick={() => removeLevel(i)}
+							aria-label="remove level">×</button
+						>
+					{/if}
+				</div>
+			{/each}
+			<button type="button" class="ghost" onclick={addLevel}>+ add level</button>
+		</fieldset>
+
+		<fieldset>
+			<legend>Word groups</legend>
+			<p class="hint">
+				Sections for the non-pronoun words on the card — identity words, ways to address you,
+				relationship words. Remove any you don't want.
+			</p>
+			{#each termGroups as group, i (group.id)}
+				<div class="group-row">
+					<input type="text" bind:value={group.label} placeholder="identity words" maxlength="40" />
+					<input
+						type="text"
+						bind:value={group.description}
+						placeholder="description (optional)"
+						maxlength="120"
+					/>
+					<button
+						type="button"
+						class="ghost remove"
+						onclick={() => removeTermGroup(i)}
+						aria-label="remove group">×</button
+					>
+				</div>
+			{/each}
+			<button type="button" class="ghost" onclick={addTermGroup}>+ add group</button>
+		</fieldset>
+
+		<fieldset>
+			<legend>Card display</legend>
+			<label class="radio compact">
+				<input type="radio" bind:group={pronounsLayout} value="level" />
+				<span><strong>Grouped</strong> <small>one section per preference level</small></span>
+			</label>
+			<label class="radio compact">
+				<input type="radio" bind:group={pronounsLayout} value="flat" />
+				<span><strong>Flat</strong> <small>authored order, level shown per entry</small></span>
+			</label>
+			<label class="checkfield">
+				<input type="checkbox" bind:checked={showExamples} />
+				<span>
+					Show example sentences
+					<small>— generated from each set's forms, e.g. "They go to the parade every year."</small>
+				</span>
+			</label>
+		</fieldset>
 	{:else}
 		<fieldset>
 			<legend>Edge types</legend>
@@ -1432,6 +1663,41 @@
 		border-color: rgba(255, 255, 255, 0.15);
 	}
 	.muted {
+		color: var(--color-muted);
+	}
+	.level-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto auto;
+		gap: var(--space-2);
+		align-items: center;
+	}
+	.group-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+		gap: var(--space-2);
+		align-items: center;
+	}
+	.level-row input[type='text'],
+	.group-row input[type='text'] {
+		background: rgba(0, 0, 0, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-fg);
+		padding: var(--space-1) var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+	}
+	.level-row input[type='text']:focus,
+	.group-row input[type='text']:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+	.checkfield {
+		display: flex;
+		gap: var(--space-2);
+		align-items: center;
+		padding: var(--space-2);
+	}
+	.checkfield small {
 		color: var(--color-muted);
 	}
 

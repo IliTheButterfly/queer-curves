@@ -135,7 +135,12 @@
 			const c = g.schema.counters.length;
 			return `occurrence · ${c} counter${c === 1 ? '' : 's'} · ${n} ${n === 1 ? 'entry' : 'entries'}`;
 		}
-		return `network · ${g.nodes.length} nodes · ${g.edges.length} edges`;
+		if (g.type === 'network') {
+			return `network · ${g.nodes.length} nodes · ${g.edges.length} edges`;
+		}
+		const sets = g.pronouns.length;
+		const words = g.terms.length;
+		return `pronoun card · ${sets} pronoun set${sets === 1 ? '' : 's'} · ${words} word${words === 1 ? '' : 's'}`;
 	}
 </script>
 
@@ -248,7 +253,7 @@
 	{/if}
 
 	<h2>Fixtures</h2>
-	<p class="muted">Canonical test cases — see <code>data_model.md</code> §11.</p>
+	<p class="muted">Canonical test cases — see <code>data_model.md</code> §12.</p>
 	<ul class="graph-list">
 		{#each fixtureGraphs as graph (graph.id)}
 			<li>

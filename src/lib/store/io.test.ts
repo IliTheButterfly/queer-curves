@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GraphImportError, parseGraphJson } from './io.js';
-import { acefluxFixture, drinksFixture, polyculeFixture } from '../fixtures.js';
+import { acefluxFixture, drinksFixture, polyculeFixture, pronounCardFixture } from '../fixtures.js';
 import { SCHEMA_VERSION } from '../types.js';
 
 describe('parseGraphJson', () => {
@@ -16,6 +16,13 @@ describe('parseGraphJson', () => {
 		const parsed = parseGraphJson(json);
 		expect(parsed.id).toBe(polyculeFixture.id);
 		expect(parsed.type).toBe('network');
+	});
+
+	it('round-trips a pronoun graph', () => {
+		const json = JSON.stringify(pronounCardFixture);
+		const parsed = parseGraphJson(json);
+		expect(parsed.id).toBe(pronounCardFixture.id);
+		expect(parsed.type).toBe('pronouns');
 	});
 
 	it('throws GraphImportError on invalid JSON', () => {
@@ -114,6 +121,31 @@ describe('parseGraphJson', () => {
 			]
 		};
 		expect(() => parseGraphJson(JSON.stringify(g))).toThrow(/amount/);
+	});
+
+	it('rejects a pronoun graph with an empty scale', () => {
+		const g = {
+			...pronounCardFixture,
+			schema: { ...pronounCardFixture.schema, levels: [] }
+		};
+		expect(() => parseGraphJson(JSON.stringify(g))).toThrow(/levels/);
+	});
+
+	it('rejects a pronoun graph missing term_groups', () => {
+		const g = {
+			...pronounCardFixture,
+			schema: { ...pronounCardFixture.schema, term_groups: undefined }
+		};
+		expect(() => parseGraphJson(JSON.stringify(g))).toThrow(/term_groups/);
+	});
+
+	it('rejects a pronoun graph missing pronouns or terms', () => {
+		expect(() =>
+			parseGraphJson(JSON.stringify({ ...pronounCardFixture, pronouns: undefined }))
+		).toThrow(/pronouns|terms/);
+		expect(() =>
+			parseGraphJson(JSON.stringify({ ...pronounCardFixture, terms: undefined }))
+		).toThrow(/pronouns|terms/);
 	});
 
 	it('rejects a graph missing customization', () => {

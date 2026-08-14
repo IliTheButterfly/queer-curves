@@ -4,6 +4,7 @@
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
 	import OccurrenceChart from '$lib/graphs/occurrence/OccurrenceChart.svelte';
+	import PronounCard from '$lib/graphs/pronouns/PronounCard.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -19,13 +20,29 @@
 		// Stable shallow clone with palette swapped. Background also gets the
 		// last color of the palette tinted dark — gives a flag-themed feel
 		// without sacrificing legibility.
-		return {
+		const themed = {
 			...graph,
 			customization: {
 				...graph.customization,
 				theme: { ...graph.customization.theme, palette: colors }
 			}
 		} as Graph;
+		// A pronoun card takes its colours from the preference scale rather
+		// than from the palette directly, so re-colour the scale too or the
+		// preview would ignore the palette entirely.
+		if (themed.type === 'pronouns' && colors.length > 0) {
+			return {
+				...themed,
+				schema: {
+					...themed.schema,
+					levels: themed.schema.levels.map((level, i) => ({
+						...level,
+						color: colors[i % colors.length]
+					}))
+				}
+			};
+		}
+		return themed;
 	}
 </script>
 
@@ -48,7 +65,10 @@
 	</div>
 
 	<div class="hex-list" aria-label="Hex values">
-		{#each palette.colors as color (color)}
+		<!-- Keyed by index, not colour: flags repeat colours (the trans flag is
+		     blue/pink/white/pink/blue), and a value-keyed each throws
+		     each_key_duplicate and takes the whole page down. -->
+		{#each palette.colors as color, i (i)}
 			<span class="hex-chip">
 				<span class="dot" style:background={color}></span>
 				<code>{color}</code>
@@ -67,8 +87,10 @@
 					<SpectrumHistoryChart {graph} />
 				{:else if graph.type === 'occurrence'}
 					<OccurrenceChart {graph} />
-				{:else}
+				{:else if graph.type === 'network'}
 					<NetworkChart {graph} />
+				{:else}
+					<PronounCard {graph} />
 				{/if}
 			</div>
 		</section>

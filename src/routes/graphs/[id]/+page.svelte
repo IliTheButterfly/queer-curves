@@ -8,6 +8,7 @@
 	import OccurrenceQuickAdd from '$lib/ui/OccurrenceQuickAdd.svelte';
 	import OccurrenceForm from '$lib/ui/OccurrenceForm.svelte';
 	import OccurrenceTimeline from '$lib/ui/OccurrenceTimeline.svelte';
+	import PronounCard from '$lib/graphs/pronouns/PronounCard.svelte';
 	import GraphStats from '$lib/ui/GraphStats.svelte';
 	import SpectrumDatapointForm from '$lib/ui/SpectrumDatapointForm.svelte';
 	import SpectrumDatapointList from '$lib/ui/SpectrumDatapointList.svelte';
@@ -15,11 +16,19 @@
 	import NetworkNodeList from '$lib/ui/NetworkNodeList.svelte';
 	import NetworkEdgeForm from '$lib/ui/NetworkEdgeForm.svelte';
 	import NetworkEdgeList from '$lib/ui/NetworkEdgeList.svelte';
+	import PronounSetForm from '$lib/ui/PronounSetForm.svelte';
+	import PronounSetList from '$lib/ui/PronounSetList.svelte';
+	import GenderTermForm from '$lib/ui/GenderTermForm.svelte';
+	import GenderTermList from '$lib/ui/GenderTermList.svelte';
 	import ShareSection from '$lib/ui/ShareSection.svelte';
+	import HoldToReveal from '$lib/ui/HoldToReveal.svelte';
+	import NetworkExportDialog from '$lib/ui/NetworkExportDialog.svelte';
+	import { hasHideableNames, namedMembers } from '$lib/graphs/network/privacy.js';
 	import { deleteUserGraph, getUserGraph, isOwnGraph, saveUserGraph } from '$lib/store/graphs.js';
-	import { downloadGraphAsJson } from '$lib/store/io.js';
+	import { downloadDataUrl, downloadGraphAsJson } from '$lib/store/io.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 	import type {
+		GenderTerm,
 		Graph,
 		NetworkEdge,
 		NetworkGraph,
@@ -27,6 +36,8 @@
 		Occurrence,
 		OccurrenceBucket,
 		OccurrenceGraph,
+		PronounSet,
+		PronounsGraph,
 		SpectrumDatapoint,
 		SpectrumGraph
 	} from '$lib/types.js';
@@ -239,11 +250,100 @@
 		} satisfies OccurrenceGraph);
 	}
 
+	async function handleAddPronounSet(set: PronounSet) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			pronouns: [...graph.pronouns, set]
+		} satisfies PronounsGraph);
+	}
+
+	async function handleEditPronounSet(updated: PronounSet) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			pronouns: graph.pronouns.map((p) => (p.id === updated.id ? updated : p))
+		} satisfies PronounsGraph);
+	}
+
+	async function handleRemovePronounSet(id: string) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			pronouns: graph.pronouns.filter((p) => p.id !== id)
+		} satisfies PronounsGraph);
+	}
+
+	async function handleReorderPronounSets(ids: string[]) {
+		if (!graph || graph.type !== 'pronouns') return;
+		const byId = new Map(graph.pronouns.map((p) => [p.id, p]));
+		const reordered = ids.map((id) => byId.get(id)).filter((p): p is PronounSet => p !== undefined);
+		// Guard against a stale id list (e.g. two tabs open) dropping entries.
+		if (reordered.length !== graph.pronouns.length) return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			pronouns: reordered
+		} satisfies PronounsGraph);
+	}
+
+	async function handleAddTerm(term: GenderTerm) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			terms: [...graph.terms, term]
+		} satisfies PronounsGraph);
+	}
+
+	async function handleEditTerm(updated: GenderTerm) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			terms: graph.terms.map((t) => (t.id === updated.id ? updated : t))
+		} satisfies PronounsGraph);
+	}
+
+	async function handleRemoveTerm(id: string) {
+		if (!graph || graph.type !== 'pronouns') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			terms: graph.terms.filter((t) => t.id !== id)
+		} satisfies PronounsGraph);
+	}
+
 	async function handleDelete() {
 		if (!graph) return;
 		if (!confirm(`Delete "${graph.name}"? This can't be undone.`)) return;
 		await deleteUserGraph(graph.id);
 		await goto('/');
+	}
+
+	// ─── Network name privacy ────────────────────────────────────────────
+	// Names of everyone but you are masked by default; `revealNames` is true
+	// only while the reveal button is physically held down. It is never
+	// persisted — every page load starts hidden.
+	let revealNames = $state(false);
+	let networkChart = $state<NetworkChart | null>(null);
+	let showExportDialog = $state(false);
+
+	const selfUserId = $derived(matrixStore.session?.userId ?? null);
+	const canHideNames = $derived(
+		graph?.type === 'network' ? hasHideableNames(graph, selfUserId) : false
+	);
+	const exportMembers = $derived(graph?.type === 'network' ? namedMembers(graph, selfUserId) : []);
+
+	function handleExportPng() {
+		if (!graph || graph.type !== 'network') return;
+		const dataUrl = networkChart?.exportPng();
+		showExportDialog = false;
+		if (!dataUrl) return;
+		downloadDataUrl(dataUrl, graph.name, 'png');
 	}
 
 	function pluralize(n: number, singular: string): string {
@@ -290,8 +390,13 @@
 				occurrence · {pluralize(graph.schema.counters.length, 'counter')} ·
 				{graph.occurrences.length}
 				{graph.occurrences.length === 1 ? 'entry' : 'entries'}
-			{:else}
+			{:else if graph.type === 'network'}
 				network · {pluralize(graph.nodes.length, 'node')} · {pluralize(graph.edges.length, 'edge')}
+			{:else}
+				pronoun card · {pluralize(graph.pronouns.length, 'set')} · {pluralize(
+					graph.terms.length,
+					'word'
+				)}
 			{/if}
 			{#if !isUserGraph}
 				<span class="fixture-tag">fixture</span>
@@ -345,10 +450,53 @@
 				<SpectrumHistoryChart {graph} view={activeView} />
 			{:else if graph.type === 'occurrence'}
 				<OccurrenceChart {graph} bucket={activeBucket} />
+			{:else if graph.type === 'network'}
+				<div class="network-wrap" class:revealed={revealNames}>
+					<NetworkChart
+						bind:this={networkChart}
+						{graph}
+						{selfUserId}
+						reveal={revealNames}
+						onPositionsChange={handleNetworkPositions}
+					/>
+					{#if revealNames}
+						<!-- Deliberately drawn over the chart, so it lands in any
+						     screenshot taken while names are showing. -->
+						<div class="reveal-overlay" role="status">
+							<strong>Real names are showing.</strong>
+							Don't screenshot or share this view — everyone here has to agree before their name leaves
+							your screen.
+						</div>
+					{/if}
+				</div>
 			{:else}
-				<NetworkChart {graph} onPositionsChange={handleNetworkPositions} />
+				<PronounCard {graph} />
 			{/if}
 		</div>
+
+		{#if graph.type === 'network'}
+			<div class="privacy-bar">
+				{#if canHideNames}
+					<HoldToReveal bind:revealed={revealNames} />
+					<span class="privacy-note">
+						Names are hidden by default. Only you are named on screen.
+					</span>
+				{:else}
+					<span class="privacy-note">Nobody but you is named in this network.</span>
+				{/if}
+				<button type="button" class="ghost-link" onclick={() => (showExportDialog = true)}>
+					Export PNG…
+				</button>
+			</div>
+		{/if}
+
+		{#if showExportDialog}
+			<NetworkExportDialog
+				members={exportMembers}
+				onconfirm={handleExportPng}
+				oncancel={() => (showExportDialog = false)}
+			/>
+		{/if}
 
 		<GraphStats {graph} />
 
@@ -387,11 +535,21 @@
 						<summary>Add a past entry</summary>
 						<OccurrenceForm {graph} onsubmit={handleAddOccurrence} />
 					</details>
-				{:else}
+				{:else if graph.type === 'network'}
 					<NetworkNodeForm {graph} onsubmit={handleAddNode} />
 					<NetworkNodeList {graph} onremove={handleRemoveNode} onedit={handleEditNode} />
 					<NetworkEdgeForm {graph} onsubmit={handleAddEdge} />
 					<NetworkEdgeList {graph} onremove={handleRemoveEdge} onedit={handleEditEdge} />
+				{:else}
+					<PronounSetForm {graph} onsubmit={handleAddPronounSet} />
+					<PronounSetList
+						{graph}
+						onremove={handleRemovePronounSet}
+						onedit={handleEditPronounSet}
+						onreorder={handleReorderPronounSets}
+					/>
+					<GenderTermForm {graph} onsubmit={handleAddTerm} />
+					<GenderTermList {graph} onremove={handleRemoveTerm} onedit={handleEditTerm} />
 				{/if}
 			</section>
 			<ShareSection graphId={graph.id} />
@@ -431,6 +589,42 @@
 		border-radius: 999px;
 		font-size: 0.75em;
 		color: var(--color-muted);
+	}
+	.network-wrap {
+		position: relative;
+	}
+	.network-wrap.revealed {
+		outline: 2px solid rgba(255, 170, 80, 0.5);
+		outline-offset: 2px;
+		border-radius: 6px;
+	}
+	.reveal-overlay {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		padding: var(--space-2) var(--space-3);
+		background: rgba(60, 34, 6, 0.92);
+		border-top: 1px solid rgba(255, 170, 80, 0.5);
+		color: #ffcc90;
+		font-size: 0.85em;
+		line-height: 1.4;
+		pointer-events: none;
+	}
+	.reveal-overlay strong {
+		color: #ffdcb0;
+	}
+	.privacy-bar {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		flex-wrap: wrap;
+		margin-top: var(--space-2);
+	}
+	.privacy-note {
+		color: var(--color-muted);
+		font-size: 0.85em;
+		flex: 1;
 	}
 	.read-only-tag {
 		margin: var(--space-2) 0 0;

@@ -207,6 +207,21 @@ For v1, the storage cost is acceptable (these are small text events, not media).
 
 In v1, **spectrum graphs have a single detail level**. Detail-level redaction is a network-graph feature only. If we later want partial-axis-label redaction for spectrum graphs, the same pattern (one room per variant) extends.
 
+### 7.4 Pronoun cards and detail levels
+
+Pronoun cards (`data_model.md` §5) also have a **single detail level** in v1, but they are the family most likely to want more than one, and the pattern extends cleanly: a card variant is just the same card with some entries dropped and the scale trimmed.
+
+The natural variants, when this lands:
+
+| Variant | Contents |
+|---|---|
+| full | every level, notes included |
+| public | the welcome levels only (e.g. "favourite", "okay"), notes stripped |
+
+The public variant is not merely a subset for convenience — **the refusals are the sensitive half**. "he/him: never" states something about a person that "they/them: favourite" does not, and the same is true of `notes` like "fine with friends, not at work", which names a boundary and the people it applies to. A wide-audience card should carry what to use, not what to avoid.
+
+Until variants exist, the owner's only tool is graph-level scoping: keep the honest card narrow, and if a wide-audience version is wanted, maintain it as a second card. Note that this is manual and unlinked — the two cards will drift, with the same consistency burden described in §7.2 and none of the drift detection.
+
 ## 8. History grants
 
 ### 8.1 Default: current-only
@@ -287,7 +302,7 @@ Reversibility: re-invite is possible but re-establishes from current point only 
 
 ### 10.3 Deletion (hard)
 
-Defined in `data_model.md` §7.3. Summary: owner publishes tombstone, kicks all members, leaves the room, signals all clients to wipe cache. Strongest revocation, applies to all viewers at once.
+Defined in `data_model.md` §8.3. Summary: owner publishes tombstone, kicks all members, leaves the room, signals all clients to wipe cache. Strongest revocation, applies to all viewers at once.
 
 ### 10.4 Choosing between them
 
@@ -411,3 +426,8 @@ Tabled for later discussion, not yet decided.
 2. **Snapshot heartbeat: weekly, unconditional** (§6.3). One snapshot per graph per week regardless of activity. The unconditional cadence prevents the homeserver from inferring user activity from snapshot timing.
 3. **Default homeserver: run one, recommend it** (with self-host always available). A public queer-curves homeserver will be operated by the project for users who don't self-host. Operational specifics (which homeserver implementation, federation policy, registration policy, T&Cs) deferred — user will provide further info later, will land in STACK.md / OPERATIONS.md when known.
 4. **Owner key backup is required at first login.** Onboarding flow mandates Matrix cross-signing + key backup setup before the user can create or receive any graphs. Without it, multi-device key sharing breaks and account recovery is impossible (§15.1 covers the recovery UX side, deferred). Skipping key backup setup is not offered as an option — the consequence (total data loss on device loss) is too severe to make optional.
+
+**2026-08-14** — pronoun cards (`data_model.md` §5) added:
+
+5. **Cards ride the existing sharing mechanism unchanged.** One room per card, same grant model, same revocation verbs, no new event types. A new graph family should not need new protocol surface; if it did, that would be a sign the family was modeled wrong.
+6. **Card detail-level variants are deferred, and the redaction direction is specified now** (§7.4): a wide-audience variant keeps the welcome levels and drops refusals and notes. Recording the direction before implementing it prevents the intuitive-but-wrong "just hide the notes" version.

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { NetworkGraph, NetworkNode } from '$lib/types.js';
+	import type { GenderTerm, PronounsGraph } from '$lib/types.js';
 	import ColorPickerWithPalette from './ColorPickerWithPalette.svelte';
 
 	let {
@@ -9,91 +9,93 @@
 		oncancel,
 		onsubmit
 	}: {
-		graph: NetworkGraph;
-		initial?: NetworkNode;
+		graph: PronounsGraph;
+		initial?: GenderTerm;
 		oncancel?: () => void;
-		onsubmit: (node: NetworkNode) => void;
+		onsubmit: (term: GenderTerm) => void;
 	} = $props();
 
 	const isEdit = $derived(initial !== undefined);
-
-	let label = $state(untrack(() => initial?.label ?? ''));
-	let color = $state(untrack(() => initial?.color ?? ''));
-	let isSelf = $state(untrack(() => initial?.is_self ?? false));
-
-	// Only one node can be you. Warn rather than silently reassigning — the
-	// owner should see which node currently holds the flag.
-	const existingSelf = $derived(graph.nodes.find((n) => n.is_self && n.id !== initial?.id));
-
 	const paletteColors = $derived(graph.customization.theme.palette);
 
-	function generateId(existing: NetworkNode[]): string {
-		const used = new Set(existing.map((n) => n.id));
+	let label = $state(untrack(() => initial?.label ?? ''));
+	let groupId = $state(untrack(() => initial?.group_id ?? graph.schema.term_groups[0]?.id ?? ''));
+	let levelId = $state(untrack(() => initial?.level_id ?? graph.schema.levels[0]?.id ?? ''));
+	let notes = $state(untrack(() => initial?.notes ?? ''));
+	let color = $state(untrack(() => initial?.color ?? ''));
+
+	function generateId(existing: GenderTerm[]): string {
+		const used = new Set(existing.map((t) => t.id));
 		for (let i = 1; i < 1000; i++) {
-			const id = `n${i}`;
+			const id = `t${i}`;
 			if (!used.has(id)) return id;
 		}
-		return 'n_' + Math.random().toString(36).slice(2, 8);
+		return 't_' + Math.random().toString(36).slice(2, 8);
 	}
 
 	function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
-		const node: NetworkNode = {
-			id: initial?.id ?? generateId(graph.nodes),
-			label: label.trim()
+		const term: GenderTerm = {
+			id: initial?.id ?? generateId(graph.terms),
+			label: label.trim(),
+			group_id: groupId,
+			level_id: levelId
 		};
-		if (color) node.color = color;
-		if (isSelf && !existingSelf) node.is_self = true;
-		// Preserve fields we don't edit here.
-		if (initial?.avatar_ref) node.avatar_ref = initial.avatar_ref;
-		if (initial?.subject_ref) node.subject_ref = initial.subject_ref;
-		if (initial?.link_status) node.link_status = initial.link_status;
-		if (initial?.position) node.position = initial.position;
+		if (notes.trim()) term.notes = notes.trim();
+		if (color) term.color = color;
 
-		onsubmit(node);
+		onsubmit(term);
 
 		if (!isEdit) {
 			label = '';
+			notes = '';
 			color = '';
 		}
 	}
 </script>
 
-<form onsubmit={handleSubmit} class="node-form">
-	<h3>{isEdit ? 'Edit person' : 'Add person'}</h3>
+<form onsubmit={handleSubmit} class="term-form">
+	<h3>{isEdit ? 'Edit word' : 'Add word'}</h3>
 	<div class="row">
 		<label class="field">
-			<span class="label">Name</span>
-			<input type="text" bind:value={label} required placeholder="Alex" maxlength="60" />
+			<span class="label">Word</span>
+			<input type="text" bind:value={label} required placeholder="nonbinary" maxlength="60" />
+		</label>
+		<label class="field">
+			<span class="label">Group</span>
+			<select bind:value={groupId}>
+				{#each graph.schema.term_groups as group (group.id)}
+					<option value={group.id}>{group.label}</option>
+				{/each}
+			</select>
+		</label>
+		<label class="field">
+			<span class="label">Preference</span>
+			<select bind:value={levelId}>
+				{#each graph.schema.levels as level (level.id)}
+					<option value={level.id}>{level.label}</option>
+				{/each}
+			</select>
 		</label>
 		<div class="field colorfield">
 			<span class="label">Colour <small>(optional)</small></span>
-			<ColorPickerWithPalette bind:value={color} {paletteColors} ariaLabel="person colour" />
+			<ColorPickerWithPalette bind:value={color} {paletteColors} ariaLabel="word colour" />
 		</div>
 	</div>
-	<label class="selfrow" class:disabled={Boolean(existingSelf)}>
-		<input type="checkbox" bind:checked={isSelf} disabled={Boolean(existingSelf)} />
-		<span>
-			This is me
-			{#if existingSelf}
-				<small>— “{existingSelf.label}” is already marked as you</small>
-			{:else}
-				<small>— your own name stays visible; everyone else's is hidden by default</small>
-			{/if}
-		</span>
+	<label class="field">
+		<span class="label">Notes <small>(optional)</small></span>
+		<input type="text" bind:value={notes} placeholder="only from close friends" maxlength="200" />
 	</label>
 	<div class="actions">
 		{#if oncancel}
 			<button type="button" class="cancel" onclick={oncancel}>Cancel</button>
 		{/if}
-		<button type="submit" class="primary">
-			{isEdit ? 'Save changes' : '+ add person'}
-		</button>
+		<button type="submit" class="primary">{isEdit ? 'Save changes' : '+ add word'}</button>
 	</div>
 </form>
 
 <style>
-	.node-form {
+	.term-form {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
@@ -109,7 +111,7 @@
 	}
 	.row {
 		display: grid;
-		grid-template-columns: 1fr auto;
+		grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
 		gap: var(--space-3);
 		align-items: end;
 	}
@@ -122,7 +124,8 @@
 		font-size: 0.85em;
 		color: var(--color-muted);
 	}
-	.field input[type='text'] {
+	.field input[type='text'],
+	.field select {
 		background: rgba(0, 0, 0, 0.25);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		color: var(--color-fg);
@@ -130,21 +133,10 @@
 		border-radius: 4px;
 		font: inherit;
 	}
-	.field input[type='text']:focus {
+	.field input[type='text']:focus,
+	.field select:focus {
 		outline: none;
 		border-color: var(--color-accent);
-	}
-	.selfrow {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--space-2);
-		font-size: 0.9em;
-	}
-	.selfrow small {
-		color: var(--color-muted);
-	}
-	.selfrow.disabled {
-		opacity: 0.6;
 	}
 	.actions {
 		display: flex;

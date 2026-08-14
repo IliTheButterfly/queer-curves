@@ -7,8 +7,10 @@ import {
 	type NetworkGraph,
 	type Occurrence,
 	type OccurrenceGraph,
+	type PronounsGraph,
 	type SpectrumGraph
 } from './types.js';
+import { DEFAULT_LEVELS, DEFAULT_TERM_GROUPS } from './graphs/pronouns/defaults.js';
 
 const now = '2026-05-07T12:00:00Z';
 const placeholderOwner = '@example:queercurves.app';
@@ -292,11 +294,85 @@ export const drinksFixture: OccurrenceGraph = {
 	occurrences: drinkEntries
 };
 
+// ─── Pronoun card (data_model.md §12.4) ─────────────────────────────────────
+//
+// Exercises the parts of §5 that are easy to get wrong: a mixed scale where
+// the same person welcomes two sets and refuses a third, an entry with no
+// declension at all ("name only"), a partially-filled set, and terms spread
+// across all three default groups.
+
+export const pronounCardFixture: PronounsGraph = {
+	id: 'fixture-pronoun-card',
+	type: 'pronouns',
+	name: 'my pronouns',
+	description: 'What to call me, and what not to.',
+	created_at: now,
+	modified_at: now,
+	schema_version: SCHEMA_VERSION,
+	owner: placeholderOwner,
+	editors: [],
+	display_name: 'Ada',
+	schema: {
+		levels: [...DEFAULT_LEVELS],
+		term_groups: [...DEFAULT_TERM_GROUPS]
+	},
+	customization: {
+		theme: baseTheme,
+		title: { show: true, text: 'my pronouns' }
+	},
+	pronouns: [
+		{
+			id: 'pn1',
+			label: 'they/them',
+			level_id: 'favourite',
+			forms: {
+				subject: 'they',
+				object: 'them',
+				possessive_determiner: 'their',
+				possessive_pronoun: 'theirs',
+				reflexive: 'themself',
+				plural: true
+			}
+		},
+		{
+			id: 'pn2',
+			label: 'she/her',
+			level_id: 'okay',
+			notes: 'fine with friends, not at work',
+			forms: {
+				subject: 'she',
+				object: 'her',
+				possessive_determiner: 'her',
+				possessive_pronoun: 'hers',
+				reflexive: 'herself'
+			}
+		},
+		// No forms — a real card entry that doesn't decline.
+		{ id: 'pn3', label: 'name only', level_id: 'close-only' },
+		// Subject + object only: renders as a chip, and produces just the
+		// example sentences those two forms can satisfy.
+		{ id: 'pn4', label: 'ey/em', level_id: 'close-only', forms: { subject: 'ey', object: 'em' } },
+		{ id: 'pn5', label: 'he/him', level_id: 'never' }
+	],
+	terms: [
+		{ id: 't1', label: 'nonbinary', group_id: 'identity', level_id: 'favourite' },
+		{ id: 't2', label: 'transfem', group_id: 'identity', level_id: 'favourite' },
+		{ id: 't3', label: 'woman', group_id: 'identity', level_id: 'okay', notes: 'sometimes' },
+		{ id: 't4', label: 'lady', group_id: 'address', level_id: 'avoid' },
+		{ id: 't5', label: 'Mx.', group_id: 'address', level_id: 'favourite' },
+		{ id: 't6', label: 'sir', group_id: 'address', level_id: 'never' },
+		{ id: 't7', label: 'partner', group_id: 'relationship', level_id: 'favourite' },
+		{ id: 't8', label: 'datemate', group_id: 'relationship', level_id: 'okay' },
+		{ id: 't9', label: 'girlfriend', group_id: 'relationship', level_id: 'close-only' }
+	]
+};
+
 export const allFixtures = [
 	acefluxFixture,
 	genderfluidFixture,
 	moodEnergyFixture,
 	polyculeFixture,
 	polyculeRedactedFixture,
-	drinksFixture
+	drinksFixture,
+	pronounCardFixture
 ];
