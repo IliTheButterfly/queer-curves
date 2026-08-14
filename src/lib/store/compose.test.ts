@@ -61,6 +61,20 @@ describe('checkComposable', () => {
 		expect(issues.some((i) => i.level === 'error')).toBe(true);
 	});
 
+	it('declines pronoun cards rather than guessing how two preference scales line up', () => {
+		const card = {
+			...spectrum(),
+			id: 'g_p',
+			type: 'pronouns' as const,
+			schema: { levels: [], term_groups: [] },
+			pronouns: [],
+			terms: []
+		};
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const issues = checkComposable([{ graph: card as any }]);
+		expect(issues.some((i) => i.level === 'error' && i.code === 'unsupported-type')).toBe(true);
+	});
+
 	it('rejects spectra with different dimensionality', () => {
 		const oneD = spectrum({
 			id: 'g_b',

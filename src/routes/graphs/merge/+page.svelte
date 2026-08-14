@@ -138,7 +138,7 @@
 							.map((a) => `${a.name} [${a.range[0]}, ${a.range[1]}]`)
 							.join(' · ')}
 					</li>
-				{:else}
+				{:else if preview.type === 'network'}
 					<li>{preview.nodes.length} nodes</li>
 					<li>{preview.edges.length} edges</li>
 					<li>{preview.schema.edge_types.length} edge types</li>

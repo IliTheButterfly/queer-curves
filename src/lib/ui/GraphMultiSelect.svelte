@@ -36,7 +36,10 @@
 			const n = g.datapoints.length;
 			return `${g.schema.dimensions}D spectrum · ${n} point${n === 1 ? '' : 's'}`;
 		}
-		return `network · ${g.nodes.length} nodes · ${g.edges.length} edges`;
+		if (g.type === 'network') {
+			return `network · ${g.nodes.length} nodes · ${g.edges.length} edges`;
+		}
+		return `pronoun card · ${g.pronouns.length} sets · ${g.terms.length} terms`;
 	}
 </script>
 

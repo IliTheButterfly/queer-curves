@@ -26,7 +26,7 @@ Matrix-backed work needs a homeserver. `scripts/dev-matrix.sh up | down | logs |
 
 ### Headless probes (`scripts/*.mjs`)
 
-Not CI tests — manual playwright-core harnesses that drive a real browser against `pnpm dev` + dev Synapse to exercise flows unit tests can't (crypto, sync, multi-user). Each covers one path: `smoke-test` (login → keys → create → reload), `share-probe` (two-user invite/accept), `multi-device-probe`, `delete-probe`, `network-probe`, `migration-probe`, `restore-error-probe`, `datapoint-probe`, `refresh-probe`. They expect `DEV_URL` (default `http://localhost:5174`) and `HOMESERVER`. Add a probe when a change touches an E2EE or multi-party path; run the relevant one before claiming such a change works.
+Not CI tests — manual playwright-core harnesses that drive a real browser against `pnpm dev` + dev Synapse to exercise flows unit tests can't (crypto, sync, multi-user). Each covers one path: `smoke-test` (login → keys → create → reload), `share-probe` (two-user invite/accept), `multi-device-probe`, `delete-probe`, `network-probe`, `migration-probe`, `restore-error-probe`, `datapoint-probe`, `refresh-probe`, `name-privacy-probe` (the only one needing no homeserver — it drives the polycule fixture). They expect `DEV_URL` (default `http://localhost:5174`) and `HOMESERVER`. Add a probe when a change touches an E2EE or multi-party path; run the relevant one before claiming such a change works.
 
 ## Architecture
 
@@ -61,9 +61,13 @@ This whole-snapshot design intentionally trades the event-stream/history granula
 
 Read-only mode for non-owners comes from `isOwnGraph()` (room creator vs. current user).
 
+### Network name privacy
+
+`graphs/network/privacy.ts` is the single source of truth for what a node is _called_ on screen. Everyone but you renders with no label at all by default (a "Person N" pseudonym was tried and rejected — a stable handle is still screenshot-able); your own node reads "You". Real names appear only while the hold-to-reveal button is held (`ui/HoldToReveal.svelte`), and PNG export goes through a per-person consent dialog (`ui/NetworkExportDialog.svelte`) before `NetworkChart.exportPng()` will produce an image. "You" is `node.is_self`, or a `subject_ref` matching the signed-in account. This is presentation-only — storage and sharing are unchanged — and the reasoning is logged in `THREATS.md` §11 and `data_model.md` §13. If you touch label rendering, derive labels from `privacy.ts` rather than reading `node.label`, or the masked view and the export will disagree.
+
 ### Combining graphs
 
-`store/compose.ts` is the one place several graphs become one, and both features that do it share it (`data_model.md` §9a):
+`store/compose.ts` is the one place several graphs become one, and both features that do it share it (`data_model.md` §10a):
 
 - **Merge** (`store/merge.ts`, `/graphs/merge`) composes and _saves_ the result as a new, ordinary graph. Non-destructive — sources are never touched, so the undo is deleting the result.
 - **Collections** (`store/collections.ts`, `/collections`) save a list of graph ids and compose them _live_ on every open, then hand the throwaway result to the normal `SpectrumHistoryChart`/`NetworkChart`. Nothing composed is persisted.
@@ -75,19 +79,29 @@ A collection renders in one of two modes, and they have different compatibility 
 - **Combined** — `compose.ts` lays members onto _shared_ axes (axis 0 is axis 0 for everyone), so it needs matching dimensionality.
 - **Custom axes** — `crossplot.ts` binds each visual channel to one `(member, axis)` pair, so it reads _named_ axes and doesn't care about dimensionality. This is what makes "my stress vs their stress" and "stress vs libido" expressible.
 
-That split is why there are two checks. `checkComposable` is strict (merges, and combined mode); `checkCollectionMembers` downgrades `dimension-mismatch` to a warning because custom axes handles it. Issues carry a machine-readable `code` — match on that, never on the prose. When both channels are axes, points are paired by **last-observation-carried-forward**, which is an approximation and must keep its caveat text on screen (THREATS.md §10).
+**Pronoun cards are refused by both modes** — their preference scale is user-authored, so mapping one card's levels onto another's would put our vocabulary in the user's mouth (`data_model.md` §13 decision 7 and 23). Refuse explicitly with the reason shown; don't invent a mapping.
+
+That split is why there are two checks. `checkComposable` is strict (merges, and combined mode); `checkCollectionMembers` downgrades `dimension-mismatch` to a warning because custom axes handles it. Issues carry a machine-readable `code` — match on that, never on the prose. When both channels are axes, points are paired by **last-observation-carried-forward**, which is an approximation and must keep its caveat text on screen (THREATS.md §11).
 
 `collections.ts` mirrors `graphs.ts` exactly (per-id dispatch, `ensureHydrated()` first, `c_…` migrates to a room on next save), and `collections-matrix.ts` mirrors `graphs-matrix.ts` with its own `app.queercurves.collection.*` event types — distinct types are what keep collections out of `listMatrixGraphs()` and vice versa. Collection rooms deliberately have **no `m.room.name`** (THREATS.md §7 rule 3).
 
 ### Domain model
 
-`src/lib/types.ts` is the code-side mirror of `data_model.md` §1–§9. `Graph` is a discriminated union on `type`: `SpectrumGraph` (N-D axes, regions, waypoints, timestamped datapoints, saved `SpectrumView`s that reproject the same points cartesian/radial/polar) and `NetworkGraph` (nodes, typed edges, `subject_ref` links that require a consent handshake). Any schema change must bump `SCHEMA_VERSION` and update `data_model.md` §8 — `store/io.ts` refuses to import graphs from a future version, which is the fail-safe old clients rely on.
+`src/lib/types.ts` is the code-side mirror of `data_model.md` §1–§10. `Graph` is a discriminated union on `type`, with three families:
 
-`src/lib/fixtures.ts` holds the canonical test cases from `data_model.md` §11 (aceflux, genderfluid, polycule, polycule-redacted); they are bundled and read-only.
+- `SpectrumGraph` — N-D axes, regions, waypoints, timestamped datapoints, saved `SpectrumView`s that reproject the same points cartesian/radial/polar.
+- `NetworkGraph` — nodes, typed edges, `subject_ref` links that require a consent handshake.
+- `PronounsGraph` — a pronoun/gender card (`data_model.md` §5): `pronouns` sets and `terms` words, each referencing a per-graph `schema.levels` preference scale by id. Entries whose `level_id`/`group_id` no longer resolve must stay visible under "unsorted"/"ungrouped" rather than vanish — the scale is editable after entries exist. Example sentences are generated in `graphs/pronouns/sentences.ts`, which **skips any template needing a form the user didn't supply** instead of inferring one; inventing "her's" is the same class of bug as misgendering.
+
+Any schema change must bump `SCHEMA_VERSION` and update `data_model.md` §9 — `store/io.ts` refuses to import graphs from a future version, which is the fail-safe old clients rely on. A new graph _family_ bumps it too (v2 = pronoun cards), even though existing families gain no fields.
+
+Adding a graph family means touching every type-dispatching site: `store/io.ts` validation, `ui/GraphConfigForm.svelte` (create/edit), `routes/graphs/[id]/+page.svelte` (render + editors), `ui/GraphStats.svelte`, `routes/+page.svelte` (`summarize`), and `routes/palettes/[id]/+page.svelte` (per-palette preview). The storage layer (`store/graphs.ts`, `graphs-matrix.ts`) is type-agnostic and needs nothing.
+
+`src/lib/fixtures.ts` holds the canonical test cases from `data_model.md` §12 (aceflux, genderfluid, polycule, polycule-redacted, pronoun-card); they are bundled and read-only.
 
 ### Rendering
 
-`graphs/spectrum/SpectrumHistoryChart.svelte` (d3) and `graphs/network/NetworkChart.svelte` (cytoscape + fcose, lazy-loaded). `presets/palettes.ts` holds queer-flag palettes; a graph's `customization.theme.palette` drives element colors, and elements can reference entries as `@palette[i]`. App chrome is purple/lavender CSS custom properties in `src/app.css` (`--color-bg: #1a1424`, `--color-accent: #c98aff`).
+`graphs/spectrum/SpectrumHistoryChart.svelte` (d3), `graphs/network/NetworkChart.svelte` (cytoscape + fcose, lazy-loaded), and `graphs/pronouns/PronounCard.svelte` (plain DOM — no chart library; keeps the card selectable and screen-reader friendly). `presets/palettes.ts` holds queer-flag palettes; a graph's `customization.theme.palette` drives element colors, and elements can reference entries as `@palette[i]`. App chrome is purple/lavender CSS custom properties in `src/app.css` (`--color-bg: #1a1424`, `--color-accent: #c98aff`).
 
 ## Working in this repo
 

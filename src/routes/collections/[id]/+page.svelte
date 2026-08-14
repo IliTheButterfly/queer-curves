@@ -22,7 +22,7 @@
 	} from '$lib/store/collections.js';
 	import { axisOptions, defaultCollectionView } from '$lib/store/crossplot.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
-	import type { CollectionSeries, CollectionView, GraphCollection } from '$lib/types.js';
+	import type { CollectionSeries, CollectionView, Graph, GraphCollection } from '$lib/types.js';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -115,6 +115,14 @@
 		await persist({ ...collection, axis_view: effectiveAxisView });
 	}
 
+	// Pronoun cards can't be composed (compose.ts explains why), but a
+	// collection can still *list* one, so the legend has to describe it.
+	function memberCount(g: Graph): number {
+		if (g.type === 'spectrum') return g.datapoints.length;
+		if (g.type === 'network') return g.nodes.length;
+		return g.pronouns.length + g.terms.length;
+	}
+
 	// The legend: one row per member that actually loaded, in member order,
 	// carrying the colour its points are drawn in.
 	const legend = $derived(
@@ -122,8 +130,9 @@
 			id: s.graph.id,
 			label: s.label ?? s.graph.name,
 			color: s.color ?? seriesColor(i),
-			count: s.graph.type === 'spectrum' ? s.graph.datapoints.length : s.graph.nodes.length,
-			unit: s.graph.type === 'spectrum' ? 'points' : 'nodes'
+			count: memberCount(s.graph),
+			unit:
+				s.graph.type === 'spectrum' ? 'points' : s.graph.type === 'network' ? 'nodes' : 'entries'
 		}))
 	);
 
@@ -337,7 +346,7 @@
 			<div class="chart">
 				{#if composed.type === 'spectrum'}
 					<SpectrumHistoryChart graph={composed} view={activeView} />
-				{:else}
+				{:else if composed.type === 'network'}
 					<NetworkChart graph={composed} />
 				{/if}
 			</div>

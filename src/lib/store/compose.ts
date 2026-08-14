@@ -85,6 +85,7 @@ export type IssueLevel = 'error' | 'warning';
 export type IssueCode =
 	| 'empty'
 	| 'type-mismatch'
+	| 'unsupported-type'
 	| 'dimension-mismatch'
 	| 'axis-name-mismatch'
 	| 'axis-pole-mismatch'
@@ -121,7 +122,24 @@ export function checkComposable(sources: ComposeSource[], viewer?: UserRef): Com
 		issues.push({
 			level: 'error',
 			code: 'type-mismatch',
-			message: `Can't combine a spectrum graph with a network graph — they have nothing in common to plot. Selected: ${[...types].join(', ')}.`
+			message: `These graphs are different kinds (${[...types].sort().join(', ')}) — they have nothing in common to plot. Pick graphs of one kind.`
+		});
+		return issues;
+	}
+
+	// Pronoun cards are deliberately not composable yet. Their preference
+	// scale is per-graph and user-labeled precisely so our vocabulary stays
+	// out of the user's mouth (data_model.md §13 decision 7), and combining
+	// two cards would mean deciding that one card's "okay" is the same step
+	// as another's "only if we're close". There is no answer to that which
+	// isn't us inventing words for someone. Refusing is the honest option
+	// until the user says how they want their own scales reconciled.
+	if (sources.some((s) => s.graph.type === 'pronouns')) {
+		issues.push({
+			level: 'error',
+			code: 'unsupported-type',
+			message:
+				"Pronoun cards can't be combined yet. Each card has its own preference scale in its own words, and merging them would mean guessing that one card's levels mean the same as another's."
 		});
 		return issues;
 	}
@@ -185,7 +203,8 @@ export function checkComposable(sources: ComposeSource[], viewer?: UserRef): Com
 	}
 
 	// Network: the only structural hazard is two graphs using the same edge
-	// type id for different relationships.
+	// type id for different relationships. (Pronoun cards returned above, so
+	// everything reaching here is a network graph.)
 	const networks = sources.map((s) => s.graph as NetworkGraph);
 	const seen = new Map<string, { label: string; from: string }>();
 	for (const g of networks) {
@@ -469,7 +488,14 @@ export function composeGraphs(sources: ComposeSource[], opts: ComposeOptions): G
 	if (errors.length > 0) {
 		throw new Error(errors.map((e) => e.message).join(' '));
 	}
-	return sources[0].graph.type === 'spectrum'
-		? composeSpectrum(sources, opts)
-		: composeNetwork(sources, opts);
+	// checkComposable has already rejected mixed and unsupported types, so
+	// the first source's type speaks for all of them.
+	switch (sources[0].graph.type) {
+		case 'spectrum':
+			return composeSpectrum(sources, opts);
+		case 'network':
+			return composeNetwork(sources, opts);
+		default:
+			throw new Error(`Can't combine graphs of type "${sources[0].graph.type}".`);
+	}
 }
