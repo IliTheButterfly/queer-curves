@@ -283,7 +283,14 @@ export interface NetworkGraph extends BaseGraph {
 // attacks, gym sessions, misgenderings. See data_model.md §4A.
 
 // The period occurrences roll up into for charting and target comparison.
-export type OccurrenceBucket = 'day' | 'week' | 'month';
+export type OccurrenceBucket = 'hour' | 'day' | 'week' | 'month' | 'year';
+
+// The period a counter's headline number covers — "23 this week". Modelled on
+// BetterCounter's per-counter "interval to display": the right period is a
+// property of the thing being counted (cigarettes read daily, therapy
+// sessions monthly), not a view setting shared by every counter in the graph.
+// 'lifetime' means every entry ever, with no period boundary.
+export type CounterInterval = 'day' | 'week' | 'month' | 'year' | 'lifetime';
 
 // What a target asks of you. 'at_most' is a limit (drinks per week);
 // 'at_least' is a goal (gym sessions per week). Both are advisory — the app
@@ -317,6 +324,8 @@ export interface Counter {
 	step?: number;
 	presets?: CounterPreset[];
 	target?: CounterTarget;
+	// Period the counter's headline number covers. Defaults to 'day'.
+	interval?: CounterInterval;
 }
 
 export interface Occurrence {
@@ -336,6 +345,12 @@ export interface OccurrenceSchema {
 	counters: Counter[];
 	// Bucket the chart opens on. Defaults to 'day'.
 	default_bucket?: OccurrenceBucket;
+	// Average-window policy for the "avg per period" figures: 'first_to_now'
+	// divides by the span from the first entry to now (so a counter you
+	// abandoned keeps diluting), 'first_to_last' divides by first-to-last
+	// entry (so it reports the rate while you were actually logging).
+	// Defaults to 'first_to_now'.
+	average_mode?: 'first_to_now' | 'first_to_last';
 	// Local hour (0–23) at which a new day begins for bucketing purposes.
 	// 4 means a 2am drink counts toward the night before — the thing every
 	// drink tracker gets asked for. Defaults to 0.

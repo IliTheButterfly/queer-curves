@@ -266,6 +266,9 @@ export const drinksFixture: OccurrenceGraph = {
 				unit: 'units',
 				color: '#c98aff',
 				step: 1,
+				// Units are a weekly figure in every public-health guideline, so
+				// the headline number is the week's, not today's.
+				interval: 'week',
 				presets: [
 					{ id: 'p-pint', label: 'pint', amount: 2.3 },
 					{ id: 'p-wine', label: 'glass of wine', amount: 2.1 },
@@ -279,6 +282,7 @@ export const drinksFixture: OccurrenceGraph = {
 				unit: 'cups',
 				color: '#ffd080',
 				step: 1,
+				interval: 'day',
 				presets: [{ id: 'p-double', label: 'double shot', amount: 2 }]
 			}
 		],

@@ -12,6 +12,9 @@
 		defaultBucketOf,
 		formatAmount,
 		formatBucketLabel,
+		goalProgress,
+		intervalOf,
+		lifetimeAverage,
 		rollingMean,
 		type Bucket
 	} from './aggregate.js';
@@ -254,13 +257,32 @@
 		}
 	}
 
+	// Legend doubles as the stat line BetterCounter puts under its chart: the
+	// rate, and how often the target is actually met. Both belong next to the
+	// bars, because "3 units on Friday" only means something against "avg
+	// 1.2/day" and "under the limit 71% of weeks".
 	const legendEntries = $derived(
-		graph.schema.counters.map((c, i) => ({
-			id: c.id,
-			label: c.label,
-			unit: c.unit,
-			color: counterColor(c, i, graph.customization.theme.palette)
-		}))
+		graph.schema.counters.map((c, i) => {
+			const interval = intervalOf(c);
+			const avg = lifetimeAverage(graph, c.id, interval);
+			const goal = goalProgress(graph, c.id);
+			return {
+				id: c.id,
+				label: c.label,
+				unit: c.unit,
+				color: counterColor(c, i, graph.customization.theme.palette),
+				average:
+					avg.perUnit === null
+						? null
+						: avg.perUnit > 0 && avg.perUnit < 1
+							? `every ${formatAmount(Math.round((1 / avg.perUnit) * 10) / 10)} ${avg.unit}s`
+							: `${formatAmount(Math.round(avg.perUnit * 100) / 100)}/${avg.unit}`,
+				goal:
+					goal === null || goal.percent === null
+						? null
+						: `${goal.target.direction === 'at_most' ? 'under' : 'hit'} ${formatAmount(goal.target.amount)}/${goal.target.period} ${Math.round(goal.percent * 10) / 10}%`
+			};
+		})
 	);
 
 	const legendPosition = $derived(graph.customization.legend?.position ?? 'bottom');
@@ -280,6 +302,8 @@
 					<span class="swatch" style:background={e.color}></span>
 					<span>{e.label}</span>
 					<small class="muted">{e.unit}</small>
+					{#if e.average}<small class="stat">avg {e.average}</small>{/if}
+					{#if e.goal}<small class="stat">{e.goal}</small>{/if}
 				</li>
 			{/each}
 		</ul>
@@ -315,6 +339,15 @@
 		width: 12px;
 		height: 12px;
 		border-radius: 3px;
+	}
+	.legend .stat {
+		color: var(--color-muted);
+		font-family: var(--font-mono);
+		font-size: 0.9em;
+	}
+	.legend .stat::before {
+		content: '·';
+		margin-right: 0.4em;
 	}
 	.muted {
 		color: var(--color-muted);

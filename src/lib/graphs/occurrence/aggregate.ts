@@ -1,13 +1,21 @@
-// Aggregation for occurrence graphs: rolling raw events up into day/week/
-// month buckets, comparing those buckets against counter targets, and
-// deriving the figures counting apps put front and centre (today's total,
-// time since last, streaks).
+// Aggregation for occurrence graphs: rolling raw events up into
+// hour/day/week/month/year buckets, comparing those buckets against counter
+// targets, and deriving the figures counting apps put front and centre — the
+// total for a counter's own interval, time since last, rates and goal hit
+// rate. Shaped after BetterCounter (data_model.md §4A.7).
 //
 // Everything here is pure and local-time aware. Occurrence timestamps are
-// stored UTC (data_model.md §3.4) but users count in *their* days, so all
+// stored UTC (data_model.md §3.5) but users count in *their* days, so all
 // bucketing runs through the local zone plus the graph's `day_start_hour`.
 
-import type { Counter, Occurrence, OccurrenceBucket, OccurrenceGraph } from '$lib/types.js';
+import type {
+	Counter,
+	CounterInterval,
+	CounterTarget,
+	Occurrence,
+	OccurrenceBucket,
+	OccurrenceGraph
+} from '$lib/types.js';
 
 // Upper bound on how many buckets we will materialise for a chart. A graph
 // whose first occurrence is years back would otherwise generate thousands of
@@ -57,8 +65,16 @@ export function dayStart(d: Date, dayStartHour: number): Date {
 }
 
 // Start of the bucket containing `d`. Weeks start Monday; months start on
-// the 1st. Both inherit the day-start shift.
+// the 1st; years on 1 January. All inherit the day-start shift, so a graph
+// with day_start_hour=4 has years that begin at 1 Jan 04:00.
 export function bucketStart(d: Date, bucket: OccurrenceBucket, dayStartHour: number): Date {
+	// Hours are the one bucket that doesn't sit on a day boundary — it's the
+	// chart subdivision for a daily interval, so it truncates to the hour.
+	if (bucket === 'hour') {
+		const out = new Date(d.getTime());
+		out.setMinutes(0, 0, 0);
+		return out;
+	}
 	const ds = dayStart(d, dayStartHour);
 	if (bucket === 'day') return ds;
 	if (bucket === 'week') {
@@ -68,13 +84,16 @@ export function bucketStart(d: Date, bucket: OccurrenceBucket, dayStartHour: num
 		out.setDate(ds.getDate() - mondayOffset);
 		return out;
 	}
+	if (bucket === 'year') return new Date(ds.getFullYear(), 0, 1, dayStartHour, 0, 0, 0);
 	return new Date(ds.getFullYear(), ds.getMonth(), 1, dayStartHour, 0, 0, 0);
 }
 
 export function nextBucketStart(start: Date, bucket: OccurrenceBucket): Date {
 	const out = new Date(start.getTime());
-	if (bucket === 'day') out.setDate(out.getDate() + 1);
+	if (bucket === 'hour') out.setHours(out.getHours() + 1);
+	else if (bucket === 'day') out.setDate(out.getDate() + 1);
 	else if (bucket === 'week') out.setDate(out.getDate() + 7);
+	else if (bucket === 'year') out.setFullYear(out.getFullYear() + 1);
 	else out.setMonth(out.getMonth() + 1);
 	return out;
 }
@@ -83,13 +102,19 @@ function keyOf(start: Date, bucket: OccurrenceBucket): string {
 	const y = start.getFullYear();
 	const m = String(start.getMonth() + 1).padStart(2, '0');
 	const d = String(start.getDate()).padStart(2, '0');
+	if (bucket === 'year') return `${y}`;
 	if (bucket === 'month') return `${y}-${m}`;
+	if (bucket === 'hour') return `${y}-${m}-${d}T${String(start.getHours()).padStart(2, '0')}`;
 	return `${y}-${m}-${d}`;
 }
 
 export function formatBucketLabel(start: Date, bucket: OccurrenceBucket): string {
+	if (bucket === 'year') return String(start.getFullYear());
 	if (bucket === 'month') {
 		return start.toLocaleDateString(undefined, { year: 'numeric', month: 'short' });
+	}
+	if (bucket === 'hour') {
+		return start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 	}
 	return start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
@@ -165,9 +190,12 @@ export function buildBuckets(
 // unreadable, and a graph you stopped using would otherwise squash its data
 // into the left edge behind months of empty space.
 export const DEFAULT_WINDOW: Record<OccurrenceBucket, number> = {
+	// One day's worth of hourly bars — the subdivision for a daily counter.
+	hour: 24,
 	day: 45,
 	week: 26,
-	month: 12
+	month: 12,
+	year: 10
 };
 
 export interface ChartWindow {
@@ -359,6 +387,151 @@ export function msSinceLast(
 	}
 	if (latest === null) return null;
 	return Math.max(0, now.getTime() - latest);
+}
+
+// ─── Per-counter intervals (BetterCounter's "interval to display") ──────────
+
+export function intervalOf(counter: Counter): CounterInterval {
+	return counter.interval ?? 'day';
+}
+
+// The bucket a chart uses to subdivide one interval, so the headline number
+// and the bars agree about what period they describe: a daily counter's chart
+// shows hours, a yearly counter's shows months.
+export function subdivisionOf(interval: CounterInterval): OccurrenceBucket {
+	switch (interval) {
+		case 'day':
+			return 'hour';
+		case 'week':
+		case 'month':
+			return 'day';
+		case 'year':
+			return 'month';
+		// Lifetime has no natural subdivision; months keep an arbitrarily long
+		// history readable.
+		case 'lifetime':
+			return 'month';
+	}
+}
+
+export const INTERVAL_LABELS: Record<CounterInterval, string> = {
+	day: 'today',
+	week: 'this week',
+	month: 'this month',
+	year: 'this year',
+	lifetime: 'all time'
+};
+
+// Start/end of the interval containing `now`. Lifetime returns null bounds —
+// callers treat that as "no boundary".
+export function intervalRange(
+	graph: OccurrenceGraph,
+	interval: CounterInterval,
+	now: Date = new Date()
+): { start: Date; end: Date } | null {
+	if (interval === 'lifetime') return null;
+	const start = bucketStart(now, interval, dayStartHourOf(graph));
+	return { start, end: nextBucketStart(start, interval) };
+}
+
+// The counter's headline figure: total in its own interval.
+export function intervalTotal(
+	graph: OccurrenceGraph,
+	counterId: string,
+	interval: CounterInterval,
+	now: Date = new Date()
+): number {
+	const range = intervalRange(graph, interval, now);
+	let sum = 0;
+	for (const o of graph.occurrences) {
+		if (o.counter_id !== counterId) continue;
+		const amount = Number.isFinite(o.amount) ? o.amount : 0;
+		if (range === null) {
+			sum += amount;
+			continue;
+		}
+		const t = new Date(o.timestamp).getTime();
+		if (t >= range.start.getTime() && t < range.end.getTime()) sum += amount;
+	}
+	return sum;
+}
+
+export interface AverageFigure {
+	// Amount per unit, where the unit is 'hour' for daily counters and 'day'
+	// otherwise — a per-day figure on an hourly-ish counter reads as noise.
+	perUnit: number | null;
+	unit: 'hour' | 'day';
+}
+
+// Rate at which a counter accumulates, over its whole recorded span. Which
+// span counts is `schema.average_mode`: measuring first-entry-to-now keeps
+// diluting a counter you stopped using, while first-to-last reports the rate
+// while you were actually logging.
+export function lifetimeAverage(
+	graph: OccurrenceGraph,
+	counterId: string,
+	interval: CounterInterval,
+	now: Date = new Date()
+): AverageFigure {
+	const unit: 'hour' | 'day' = interval === 'day' ? 'hour' : 'day';
+	const mine = graph.occurrences
+		.filter((o) => o.counter_id === counterId)
+		.map((o) => new Date(o.timestamp).getTime())
+		.filter((t) => Number.isFinite(t))
+		.sort((a, b) => a - b);
+	if (mine.length === 0) return { perUnit: null, unit };
+
+	const total = graph.occurrences
+		.filter((o) => o.counter_id === counterId)
+		.reduce((s, o) => s + (Number.isFinite(o.amount) ? o.amount : 0), 0);
+
+	const first = mine[0];
+	const last =
+		graph.schema.average_mode === 'first_to_last' ? mine[mine.length - 1] : now.getTime();
+	const unitMs = unit === 'hour' ? 3_600_000 : 86_400_000;
+	// A span shorter than one unit would report a wild rate off a single
+	// entry ("48 per day" from one drink an hour ago), so floor it at one.
+	const spans = Math.max(1, (last - first) / unitMs);
+	return { perUnit: total / spans, unit };
+}
+
+export interface GoalProgress {
+	counter: Counter;
+	target: CounterTarget;
+	// Completed periods that met the target, over completed periods total.
+	reached: number;
+	periods: number;
+	// reached/periods as a percentage, or null with no completed periods.
+	percent: number | null;
+}
+
+// How often a counter actually meets its target, as BetterCounter's
+// "Goal reached: 57.1%" does. Completed periods only — see §4A.4.
+export function goalProgress(
+	graph: OccurrenceGraph,
+	counterId: string,
+	now: Date = new Date()
+): GoalProgress | null {
+	const counter = graph.schema.counters.find((c) => c.id === counterId);
+	if (!counter?.target || !Number.isFinite(counter.target.amount)) return null;
+	const target = counter.target;
+
+	const series = buildBuckets(graph, target.period, now);
+	const currentKey = keyOf(bucketStart(now, target.period, dayStartHourOf(graph)), target.period);
+	const completed = series.buckets.filter((b) => b.key !== currentKey);
+	const satisfied = (v: number) =>
+		target.direction === 'at_most' ? v <= target.amount : v >= target.amount;
+
+	let reached = 0;
+	for (const b of completed) if (satisfied(b.totals[counterId] ?? 0)) reached++;
+
+	return {
+		counter,
+		target,
+		reached,
+		periods: completed.length,
+		percent: completed.length > 0 ? (reached / completed.length) * 100 : null
+	};
 }
 
 export interface TargetStatus {

@@ -6,6 +6,12 @@ import {
 	chartWindow,
 	counterTotals,
 	currentBucketTotal,
+	goalProgress,
+	intervalOf,
+	intervalRange,
+	intervalTotal,
+	lifetimeAverage,
+	subdivisionOf,
 	dayFraction,
 	dayStart,
 	groupByDay,
@@ -425,6 +431,136 @@ describe('targetStatuses', () => {
 
 	it('skips counters with no target', () => {
 		expect(targetStatuses(graph([beer], []))).toEqual([]);
+	});
+});
+
+describe('per-counter intervals', () => {
+	it('subdivides an interval the way its chart needs', () => {
+		expect(subdivisionOf('day')).toBe('hour');
+		expect(subdivisionOf('week')).toBe('day');
+		expect(subdivisionOf('month')).toBe('day');
+		expect(subdivisionOf('year')).toBe('month');
+		expect(subdivisionOf('lifetime')).toBe('month');
+	});
+
+	it('defaults a counter to a daily headline', () => {
+		expect(intervalOf(beer)).toBe('day');
+		expect(intervalOf({ ...beer, interval: 'week' })).toBe('week');
+	});
+
+	it('buckets hours and years', () => {
+		const h = bucketStart(new Date(2026, 4, 7, 13, 42), 'hour', 0);
+		expect(h.getHours()).toBe(13);
+		expect(h.getMinutes()).toBe(0);
+		const y = bucketStart(new Date(2026, 4, 7, 13), 'year', 0);
+		expect(y.getFullYear()).toBe(2026);
+		expect(y.getMonth()).toBe(0);
+		expect(y.getDate()).toBe(1);
+		expect(nextBucketStart(y, 'year').getFullYear()).toBe(2027);
+		expect(nextBucketStart(h, 'hour').getHours()).toBe(14);
+	});
+
+	it("totals only the counter's own interval", () => {
+		const g = graph(
+			[beer],
+			[
+				occ('a', 'beer', at(2026, 5, 4, 20), 2), // Monday, same week
+				occ('b', 'beer', at(2026, 5, 7, 20), 3), // Thursday = "today"
+				occ('c', 'beer', at(2026, 4, 28, 20), 9) // previous week
+			]
+		);
+		const now = new Date(2026, 4, 7, 22);
+		expect(intervalTotal(g, 'beer', 'day', now)).toBe(3);
+		expect(intervalTotal(g, 'beer', 'week', now)).toBe(5);
+		// Lifetime ignores period boundaries entirely.
+		expect(intervalTotal(g, 'beer', 'lifetime', now)).toBe(14);
+	});
+
+	it('has no range for a lifetime interval', () => {
+		expect(intervalRange(graph([beer], []), 'lifetime')).toBeNull();
+		expect(intervalRange(graph([beer], []), 'week')).not.toBeNull();
+	});
+});
+
+describe('lifetimeAverage', () => {
+	it('reports per-hour for a daily counter and per-day otherwise', () => {
+		const g = graph([beer], [occ('a', 'beer', at(2026, 5, 1, 12), 2)]);
+		expect(lifetimeAverage(g, 'beer', 'day', new Date(2026, 4, 3, 12)).unit).toBe('hour');
+		expect(lifetimeAverage(g, 'beer', 'week', new Date(2026, 4, 3, 12)).unit).toBe('day');
+	});
+
+	it('divides the total by the span in units', () => {
+		// 4 units over two days = 2/day.
+		const g = graph(
+			[beer],
+			[occ('a', 'beer', at(2026, 5, 1, 12), 2), occ('b', 'beer', at(2026, 5, 3, 12), 2)]
+		);
+		const a = lifetimeAverage(g, 'beer', 'week', new Date(2026, 4, 3, 12));
+		expect(a.perUnit).toBeCloseTo(2);
+	});
+
+	it('honours first_to_last, which stops an abandoned counter diluting', () => {
+		const entries = [
+			occ('a', 'beer', at(2026, 5, 1, 12), 2),
+			occ('b', 'beer', at(2026, 5, 3, 12), 2)
+		];
+		const now = new Date(2026, 6, 1, 12); // ~2 months later
+		const toNow = lifetimeAverage(graph([beer], entries), 'beer', 'week', now);
+		const toLast = lifetimeAverage(
+			graph([beer], entries, { average_mode: 'first_to_last' }),
+			'beer',
+			'week',
+			now
+		);
+		expect(toLast.perUnit).toBeCloseTo(2);
+		expect(toNow.perUnit!).toBeLessThan(0.2);
+	});
+
+	it('floors the span at one unit so a single fresh entry is not a wild rate', () => {
+		const g = graph([beer], [occ('a', 'beer', at(2026, 5, 7, 12), 1)]);
+		const a = lifetimeAverage(g, 'beer', 'week', new Date(2026, 4, 7, 13));
+		expect(a.perUnit).toBeCloseTo(1);
+	});
+
+	it('is null with no entries', () => {
+		expect(lifetimeAverage(graph([beer], []), 'beer', 'day').perUnit).toBeNull();
+	});
+});
+
+describe('goalProgress', () => {
+	const limited: Counter = {
+		id: 'beer',
+		label: 'beer',
+		unit: 'units',
+		target: { amount: 4, period: 'day', direction: 'at_most' }
+	};
+
+	it('reports how often completed periods met the target', () => {
+		// 5th over, 6th and 7th under, 8th = today and excluded.
+		const g = graph(
+			[limited],
+			[
+				occ('a', 'beer', at(2026, 5, 5, 20), 9),
+				occ('b', 'beer', at(2026, 5, 6, 20), 2),
+				occ('c', 'beer', at(2026, 5, 7, 20), 1),
+				occ('d', 'beer', at(2026, 5, 8, 20), 8)
+			]
+		);
+		const p = goalProgress(g, 'beer', new Date(2026, 4, 8, 22))!;
+		expect(p.reached).toBe(2);
+		expect(p.periods).toBe(3);
+		expect(p.percent).toBeCloseTo((2 / 3) * 100);
+	});
+
+	it('is null-percent before any period completes', () => {
+		const g = graph([limited], [occ('a', 'beer', at(2026, 5, 7, 20), 1)]);
+		const p = goalProgress(g, 'beer', new Date(2026, 4, 7, 22))!;
+		expect(p.periods).toBe(0);
+		expect(p.percent).toBeNull();
+	});
+
+	it('is null for a counter with no target', () => {
+		expect(goalProgress(graph([beer], []), 'beer')).toBeNull();
 	});
 });
 

@@ -17,6 +17,7 @@
 		type Region,
 		type SpectrumGraph,
 		type SpectrumView,
+		type CounterInterval,
 		type TargetDirection,
 		type TermGroup
 	} from '$lib/types.js';
@@ -249,6 +250,7 @@
 		unit: string;
 		color: string;
 		step: number;
+		interval: CounterInterval;
 		hasTarget: boolean;
 		targetAmount: number;
 		targetPeriod: OccurrenceBucket;
@@ -269,6 +271,7 @@
 			step: c.step ?? 1,
 			hasTarget: c.target !== undefined,
 			targetAmount: c.target?.amount ?? 1,
+			interval: c.interval ?? 'day',
 			targetPeriod: c.target?.period ?? 'day',
 			targetDirection: c.target?.direction ?? 'at_most',
 			presets: (c.presets ?? []).map((p) => ({ ...p }))
@@ -288,6 +291,7 @@
 							step: 1,
 							hasTarget: false,
 							targetAmount: 1,
+							interval: 'day',
 							targetPeriod: 'day',
 							targetDirection: 'at_most',
 							presets: []
@@ -340,6 +344,7 @@
 			step: 1,
 			hasTarget: false,
 			targetAmount: 1,
+			interval: 'day',
 			targetPeriod: 'day',
 			targetDirection: 'at_most',
 			presets: []
@@ -621,6 +626,8 @@
 						unit: c.unit.trim() || 'units',
 						color: c.color
 					};
+					// 'day' is the default interval; omit it rather than storing it.
+					if (c.interval !== 'day') out.interval = c.interval;
 					// Step 1 is the default; omit it rather than storing it.
 					if (Number.isFinite(c.step) && c.step > 0 && c.step !== 1) out.step = c.step;
 					const presets = c.presets
@@ -1189,6 +1196,19 @@
 					{/if}
 
 					<div class="target-row">
+						<label class="inline-num">
+							<span class="muted">headline count covers</span>
+							<select bind:value={c.interval}>
+								<option value="day">today</option>
+								<option value="week">this week</option>
+								<option value="month">this month</option>
+								<option value="year">this year</option>
+								<option value="lifetime">all time</option>
+							</select>
+						</label>
+					</div>
+
+					<div class="target-row">
 						<label class="check">
 							<input type="checkbox" bind:checked={c.hasTarget} />
 							<span>Target</span>
@@ -1242,9 +1262,11 @@
 				<label class="field">
 					<span class="label">Roll up by</span>
 					<select bind:value={defaultBucket}>
+						<option value="hour">hour</option>
 						<option value="day">day</option>
 						<option value="week">week</option>
 						<option value="month">month</option>
+						<option value="year">year</option>
 					</select>
 				</label>
 				<label class="field">

@@ -5,9 +5,9 @@
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
 	import OccurrenceChart from '$lib/graphs/occurrence/OccurrenceChart.svelte';
 	import { defaultBucketOf } from '$lib/graphs/occurrence/aggregate.js';
-	import OccurrenceQuickAdd from '$lib/ui/OccurrenceQuickAdd.svelte';
+	import OccurrenceCounters from '$lib/ui/OccurrenceCounters.svelte';
 	import OccurrenceForm from '$lib/ui/OccurrenceForm.svelte';
-	import OccurrenceTimeline from '$lib/ui/OccurrenceTimeline.svelte';
+	import OccurrenceHistory from '$lib/ui/OccurrenceHistory.svelte';
 	import PronounCard from '$lib/graphs/pronouns/PronounCard.svelte';
 	import GraphStats from '$lib/ui/GraphStats.svelte';
 	import SpectrumDatapointForm from '$lib/ui/SpectrumDatapointForm.svelte';
@@ -105,8 +105,9 @@
 	// Bucket selector state — occurrence graphs only. Starts unset so the
 	// graph's own configured default wins until the user picks otherwise.
 	let selectedBucket = $state<OccurrenceBucket | null>(null);
-	// Survives the invalidateAll() that follows each add.
+	// Survive the invalidateAll() that follows each add.
 	let manualEntryOpen = $state(false);
+	let historyOpen = $state(false);
 	const activeBucket = $derived(
 		graph?.type === 'occurrence' ? (selectedBucket ?? defaultBucketOf(graph)) : 'day'
 	);
@@ -419,12 +420,17 @@
 			</div>
 		{/if}
 
-		<!-- Logging comes first for occurrence graphs: the reason to open one is
-		     almost always to add to it, and the chart is what you look at
-		     afterwards. -->
-		{#if graph.type === 'occurrence' && isEditable}
-			<div class="quick-add-slot">
-				<OccurrenceQuickAdd {graph} onadd={handleAddOccurrence} />
+		<!-- The counter list is the page for an occurrence graph, the way it is
+		     the whole screen in BetterCounter: the reason to open one is almost
+		     always to add to it, and the chart is what you look at afterwards.
+		     Read-only viewers get the same rows without the ± controls. -->
+		{#if graph.type === 'occurrence'}
+			<div class="counters-slot">
+				<OccurrenceCounters
+					{graph}
+					onadd={handleAddOccurrence}
+					onremove={isEditable ? handleRemoveOccurrence : undefined}
+				/>
 			</div>
 		{/if}
 
@@ -437,9 +443,11 @@
 						onchange={(e) =>
 							(selectedBucket = (e.currentTarget as HTMLSelectElement).value as OccurrenceBucket)}
 					>
+						<option value="hour">hour</option>
 						<option value="day">day</option>
 						<option value="week">week</option>
 						<option value="month">month</option>
+						<option value="year">year</option>
 					</select>
 				</label>
 			</div>
@@ -500,17 +508,19 @@
 
 		<GraphStats {graph} />
 
-		<!-- The history is worth seeing on a graph shared with you, so the
-		     timeline renders read-only rather than disappearing. -->
-		{#if graph.type === 'occurrence'}
-			<div class="timeline-slot">
-				<OccurrenceTimeline
+		<!-- History exists to correct and delete individual entries, not to be
+		     read, so it stays folded away. Shared-with-you graphs get it
+		     read-only rather than not at all. -->
+		{#if graph.type === 'occurrence' && graph.occurrences.length > 0}
+			<details class="folded" bind:open={historyOpen}>
+				<summary>Every entry ({graph.occurrences.length})</summary>
+				<OccurrenceHistory
 					{graph}
 					editable={isEditable}
 					onremove={handleRemoveOccurrence}
 					onedit={handleEditOccurrence}
 				/>
-			</div>
+			</details>
 		{/if}
 
 		{#if isEditable}
@@ -526,13 +536,13 @@
 						onedit={handleEditDatapoint}
 					/>
 				{:else if graph.type === 'occurrence'}
-					<!-- Backdating and notes are the exception, not the norm, so the
-					     full form stays folded away instead of dominating the page.
-					     `open` is bound to page state because each add triggers
-					     invalidateAll(), which would otherwise snap the disclosure
-					     shut between two backdated entries. -->
-					<details class="manual-entry" bind:open={manualEntryOpen}>
-						<summary>Add a past entry</summary>
+					<!-- Backdating, amounts and notes are the exception, not the
+					     norm, so the full form stays folded away instead of
+					     dominating the page. `open` is bound to page state because
+					     each add triggers invalidateAll(), which would otherwise snap
+					     the disclosure shut between two backdated entries. -->
+					<details class="folded" bind:open={manualEntryOpen}>
+						<summary>Add an entry for another time</summary>
 						<OccurrenceForm {graph} onsubmit={handleAddOccurrence} />
 					</details>
 				{:else if graph.type === 'network'}
@@ -652,20 +662,22 @@
 		border-radius: 4px;
 		font: inherit;
 	}
-	.quick-add-slot,
-	.timeline-slot {
+	.counters-slot {
 		margin-top: var(--space-3);
 	}
-	.manual-entry summary {
+	.folded {
+		margin-top: var(--space-3);
+	}
+	.folded summary {
 		cursor: pointer;
 		color: var(--color-muted);
 		font-size: 0.9em;
 		padding: var(--space-1) 0;
 	}
-	.manual-entry summary:hover {
+	.folded summary:hover {
 		color: var(--color-accent);
 	}
-	.manual-entry[open] summary {
+	.folded[open] summary {
 		margin-bottom: var(--space-2);
 	}
 	.chart {

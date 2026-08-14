@@ -213,6 +213,7 @@ A graph defines one or more **counters** — the distinct things being counted. 
 | `step` | number | amount recorded by a bare one-tap add; defaults to `1` |
 | `presets` | list of `{id, label, amount}` | optional one-tap quantities, e.g. `pint` = 2.3 units |
 | `target` | `{amount, period, direction}` | optional; see §4A.4 |
+| `interval` | `"day"` \| `"week"` \| `"month"` \| `"year"` \| `"lifetime"` | period the headline number covers; default `day` (§4A.6) |
 
 **Units are never converted.** The model stores whatever the user thinks in; two counters with different units are never summed together (clients must subtotal per counter, not across them).
 
@@ -235,7 +236,7 @@ Correction and deletion follow §3.5 exactly: a fresh event supersedes, a redact
 
 ### 4A.3 Buckets and the day boundary
 
-Occurrences roll up into **buckets** for charting and target comparison: `day`, `week` (Monday-start), or `month`. `schema.default_bucket` sets which the chart opens on (default `day`).
+Occurrences roll up into **buckets** for charting and target comparison: `hour`, `day`, `week` (Monday-start), `month`, or `year`. `schema.default_bucket` sets which the chart opens on (default `day`).
 
 **`schema.day_start_hour`** (0–23, default 0) shifts the local day boundary. With `day_start_hour = 4`, a 2am drink counts toward the night before. This exists because it is the single most-requested behaviour in drink trackers, and because a calendar-midnight boundary splits one evening into two days and makes both the daily totals and any streak wrong.
 
@@ -267,15 +268,32 @@ Bars, not lines: occurrences are discrete counts inside a period, and a line bet
 
 Bar width is capped, so a graph with one or two buckets shows a bar rather than a filled half-chart.
 
-### 4A.6 History as a timeline
+### 4A.6 Per-counter intervals
 
-The entry history renders as a **timeline, not a table**: one row per shifted local day, each row a 24-hour track carrying a marker at the time each entry happened, sized by amount relative to the counter's step and coloured by counter. Day subtotals sit at the end of the row, per counter.
+Each counter carries its own `interval` — the period its headline number covers — one of `day`, `week`, `month`, `year`, `lifetime` (default `day`). The right period is a property of the thing counted, not a view setting shared by the whole graph: cigarettes are read daily, alcohol units weekly (every public-health guideline states them per week), therapy sessions monthly. A single graph-wide selector would force one of those to be wrong.
 
-The reason is that position carries information a list can only spell out in words — that Friday's four drinks were all after 10pm, that the coffees cluster at 9am, that a quiet week has a single marker in it. Reading a table of timestamps to recover the same shape is work the chart should be doing.
+A chart subdivides an interval one step finer, so the headline number and the bars describe the same period: `day` → hourly bars, `week`/`month` → daily, `year` → monthly, `lifetime` → monthly.
 
-Markers are focusable controls that open the entry for editing, and each day expands to a full list of its entries, so nothing is reachable only by hitting a small target. Hour labels follow the graph's own `day_start_hour` — a 4am-start day reads 04 → 10 → 16 → 22, not 00 → 06 → 12 → 18.
+`schema.average_mode` selects how the rate figure is computed: `first_to_now` (default) divides the total by the span from the first entry to now, so a counter you abandoned keeps diluting; `first_to_last` divides by first-entry-to-last-entry, reporting the rate while you were actually logging. Neither is right for everyone, which is why it's a setting.
 
-Logging is the top of the page and backdating is folded away: opening a counting graph is almost always an intent to add to it, and a full entry form sitting open above the history makes the common case pay for the rare one.
+### 4A.7 The counting UI is BetterCounter's
+
+The screen is a **list of counter rows**, deliberately copied from [BetterCounter](https://github.com/albertvaka/bettercounter) (GPL-2.0, `org.kde.bettercounter`), the open-source counter app this family was designed against. One row per counter: a large **−** and **+** flanking it, and between them the counter's name, its total for its own interval, and how long since the last entry.
+
+That layout is worth copying because it puts the three things a counting app is actually used for — add one, how many so far, how long since — on one line with no navigation. Charts and history are secondary and sit below it.
+
+**No BetterCounter code is used, and none may be.** What was taken is the interaction design, read from its layout XML and string resources. Its licence is **GPL-2.0-only**, which is *incompatible* with this project's AGPL-3.0-or-later: there is no version of the GPL both can be relicensed to. Copying a single function from it would make queer-curves undistributable. Read it for ideas; write the code here.
+
+Two departures, both forced by this model rather than chosen:
+
+- **Entries carry an amount**, so the row also offers the counter's quick-add presets. BetterCounter's every tap is +1; ours needs "a pint is 2.3 units".
+- **− removes the most recent entry** rather than decrementing a number, because an occurrence graph stores a list of events, not a counter value. It is an undo, and it is disabled when there is nothing to undo.
+
+Two figures under each row also come from BetterCounter: the rate (`avg 2.02/day`, or `avg every 15.8 hours` when the rate is below one per unit) and the goal hit rate (`under 14/week: 100%` — its "Goal reached: %"), computed over completed periods only.
+
+The full entry history is **folded away** behind a disclosure. It exists to correct and delete individual entries, not to be read; BetterCounter keeps it off the main screen entirely, reachable only through the chart and an export. Backdating is folded away for the same reason: opening a counting graph is almost always an intent to add to it *now*, and a full entry form sitting open above the history makes the common case pay for the rare one.
+
+An earlier iteration rendered the history as a 24-hour timeline per day, on the theory that time-of-day position carries information a list can't. It was rejected in review in favour of BetterCounter's shape, and is recorded here only so the idea isn't re-proposed as new.
 
 ## 5. Pronoun graphs
 
@@ -697,4 +715,6 @@ Note `oc-3`: stored as 01:15 UTC on the 2nd, but in a UTC-ish local zone that is
 14. **Units are per counter and never converted.** No unit registry, no mg↔ml, no standard-drink table. Users count in whatever they think in; the model refuses to guess. Consequence: totals are per counter, never summed across counters.
 15. **Bucketing is local-time with a configurable day boundary.** Timestamps stay UTC (§3.5), but people count in their own days, and a calendar-midnight boundary splits one evening across two days. `day_start_hour` fixes that (§4A.3). A viewer in another timezone may bucket the same graph differently — accepted, because the alternative (freezing the author's zone into the data) makes every reader's "today" wrong instead.
 16. **Targets report, never enforce.** No blocking, no warning dialogs, no nagging. A counter that scolds gets abandoned or lied to, and false data is worse than none. Streaks count completed periods only, so they don't reset at midnight (§4A.4).
-17. **Deleting a counter with logged entries is refused.** The alternative — orphaning the entries — makes them invisible to every total while still shipping them in each snapshot, which is the worst of both outcomes.
+17. **The counting UI is copied from BetterCounter, not invented** (§4A.7). Counter rows with big ±, per-counter intervals, rate and goal-hit-rate lines. Two iterations of a home-grown design (preset chips; a 24-hour timeline history) were rejected in review before this one; the reference app had already solved the layout.
+18. **`−` deletes the most recent entry rather than decrementing.** An occurrence graph stores events, not a counter value, so the only honest meaning of "minus one" is "undo the last one".
+19. **Deleting a counter with logged entries is refused.** The alternative — orphaning the entries — makes them invisible to every total while still shipping them in each snapshot, which is the worst of both outcomes.
