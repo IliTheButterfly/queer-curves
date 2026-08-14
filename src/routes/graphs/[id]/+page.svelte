@@ -3,6 +3,11 @@
 	import SpectrumHistoryChart from '$lib/graphs/spectrum/SpectrumHistoryChart.svelte';
 	import { activeViews } from '$lib/graphs/spectrum/views.js';
 	import NetworkChart from '$lib/graphs/network/NetworkChart.svelte';
+	import OccurrenceChart from '$lib/graphs/occurrence/OccurrenceChart.svelte';
+	import { defaultBucketOf } from '$lib/graphs/occurrence/aggregate.js';
+	import OccurrenceQuickAdd from '$lib/ui/OccurrenceQuickAdd.svelte';
+	import OccurrenceForm from '$lib/ui/OccurrenceForm.svelte';
+	import OccurrenceList from '$lib/ui/OccurrenceList.svelte';
 	import GraphStats from '$lib/ui/GraphStats.svelte';
 	import SpectrumDatapointForm from '$lib/ui/SpectrumDatapointForm.svelte';
 	import SpectrumDatapointList from '$lib/ui/SpectrumDatapointList.svelte';
@@ -19,6 +24,9 @@
 		NetworkEdge,
 		NetworkGraph,
 		NetworkNode,
+		Occurrence,
+		OccurrenceBucket,
+		OccurrenceGraph,
 		SpectrumDatapoint,
 		SpectrumGraph
 	} from '$lib/types.js';
@@ -81,6 +89,13 @@
 	let selectedViewId = $state<string | null>(null);
 	const activeView = $derived(
 		spectrumViews.find((v) => v.id === selectedViewId) ?? spectrumViews[0]
+	);
+
+	// Bucket selector state — occurrence graphs only. Starts unset so the
+	// graph's own configured default wins until the user picks otherwise.
+	let selectedBucket = $state<OccurrenceBucket | null>(null);
+	const activeBucket = $derived(
+		graph?.type === 'occurrence' ? (selectedBucket ?? defaultBucketOf(graph)) : 'day'
 	);
 
 	async function persist(updated: Graph) {
@@ -195,6 +210,33 @@
 		} satisfies NetworkGraph);
 	}
 
+	async function handleAddOccurrence(o: Occurrence) {
+		if (!graph || graph.type !== 'occurrence') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			occurrences: [...graph.occurrences, o]
+		} satisfies OccurrenceGraph);
+	}
+
+	async function handleRemoveOccurrence(id: string) {
+		if (!graph || graph.type !== 'occurrence') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			occurrences: graph.occurrences.filter((o) => o.id !== id)
+		} satisfies OccurrenceGraph);
+	}
+
+	async function handleEditOccurrence(updated: Occurrence) {
+		if (!graph || graph.type !== 'occurrence') return;
+		await persist({
+			...graph,
+			modified_at: new Date().toISOString(),
+			occurrences: graph.occurrences.map((o) => (o.id === updated.id ? updated : o))
+		} satisfies OccurrenceGraph);
+	}
+
 	async function handleDelete() {
 		if (!graph) return;
 		if (!confirm(`Delete "${graph.name}"? This can't be undone.`)) return;
@@ -242,6 +284,10 @@
 		<p class="meta">
 			{#if graph.type === 'spectrum'}
 				{graph.schema.dimensions}D spectrum · {pluralize(graph.datapoints.length, 'datapoint')}
+			{:else if graph.type === 'occurrence'}
+				occurrence · {pluralize(graph.schema.counters.length, 'counter')} ·
+				{graph.occurrences.length}
+				{graph.occurrences.length === 1 ? 'entry' : 'entries'}
 			{:else}
 				network · {pluralize(graph.nodes.length, 'node')} · {pluralize(graph.edges.length, 'edge')}
 			{/if}
@@ -266,9 +312,28 @@
 			</div>
 		{/if}
 
+		{#if graph.type === 'occurrence'}
+			<div class="view-selector">
+				<label>
+					<span class="muted">Roll up by:</span>
+					<select
+						value={activeBucket}
+						onchange={(e) =>
+							(selectedBucket = (e.currentTarget as HTMLSelectElement).value as OccurrenceBucket)}
+					>
+						<option value="day">day</option>
+						<option value="week">week</option>
+						<option value="month">month</option>
+					</select>
+				</label>
+			</div>
+		{/if}
+
 		<div class="chart">
 			{#if graph.type === 'spectrum'}
 				<SpectrumHistoryChart {graph} view={activeView} />
+			{:else if graph.type === 'occurrence'}
+				<OccurrenceChart {graph} bucket={activeBucket} />
 			{:else}
 				<NetworkChart {graph} onPositionsChange={handleNetworkPositions} />
 			{/if}
@@ -288,6 +353,10 @@
 						onremove={handleRemoveDatapoint}
 						onedit={handleEditDatapoint}
 					/>
+				{:else if graph.type === 'occurrence'}
+					<OccurrenceQuickAdd {graph} onadd={handleAddOccurrence} />
+					<OccurrenceForm {graph} onsubmit={handleAddOccurrence} />
+					<OccurrenceList {graph} onremove={handleRemoveOccurrence} onedit={handleEditOccurrence} />
 				{:else}
 					<NetworkNodeForm {graph} onsubmit={handleAddNode} />
 					<NetworkNodeList {graph} onremove={handleRemoveNode} onedit={handleEditNode} />

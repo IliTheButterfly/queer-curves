@@ -337,8 +337,39 @@ When closing a feature decision, append the outcome to a "feature-vs-threats" lo
 - **§6 quantum entry**: revisit when Matrix ships post-quantum primitives. Currently a flagged future risk, not an active mitigation.
 - **§T16 bulk-deletion UX**: needed for "future-self protection" — deferred to v1.x.
 - **§T8 jurisdictional guidance**: the docs and onboarding should include honest guidance for users in hostile jurisdictions. Drafting deferred but flagged.
-- **§T17 datapoint-timing flattening**: weekly batching of datapoint events as a future privacy mode. Not v1.
+- **§T17 datapoint-timing flattening**: weekly batching of datapoint events as a future privacy mode. Not v1. **Raised in priority by occurrence graphs** (§10) — a per-tap counter maps event timing 1:1 onto physical acts, so this is a scoped v1.x item rather than indefinite future work.
+- **Occurrence-graph timing disclosure**: onboarding/share-dialog copy explaining that logging as-it-happens leaks timing to the homeserver even though contents are encrypted (§10, rules 5 and 13).
+- **Occurrence-graph coarse-timestamp mode**: optional rounding of entry timestamps to their bucket, for users who want per-period totals without a minute-resolution timeline (§10).
 
 ## 10. Decisions log
 
-(Empty — this is v0. Future decisions affecting the threat model should be appended here with date and rationale.)
+### Feature: occurrence graphs (2026-08-14)
+
+Written up per §8. Feature described in `data_model.md` §4A: counters, per-event amounts, per-period targets.
+
+**1. Threats touched.**
+
+- **T4 (pattern inference), sharpened materially.** An occurrence graph is a far higher-resolution behavioural record than anything the model previously held. A spectrum graph gets a datapoint when someone feels like recording one; a drinks counter gets an entry per drink, timestamped to the minute, with amounts. A viewer with history can reconstruct binges, benders, relapses, dose schedules, and sleep patterns — inferences the source data supports precisely, not loosely.
+- **T17 (update-cadence inference), sharpened materially.** The whole-snapshot design (`data_model.md` §9) resends the snapshot on every change, so one tap produces one event. Content is encrypted; **timing is not**. A homeserver watching an occurrence room's event stream reads the drinking times directly off the timeline without decrypting anything. This is strictly worse than the spectrum case, where events are sparse and don't correspond 1:1 with a physical act.
+- **T1 / T3 / T8 (coerced disclosure, receipts, legal compulsion), higher stakes.** Intake counts are directly actionable against their subject in a way identity data usually isn't: custody proceedings, insurance, employment, immigration, professional licensing, and treatment-programme compliance all consume exactly this data. A screenshot of a drinks chart is legible to a hostile audience with no interpretation needed.
+- **T16 (future-self regret).** Same shape as existing data, larger volume, and it accumulates whether or not anything interesting happened.
+
+**2. Adversary capability change.** A4/A5 (homeserver, federated peers) gain a high-resolution activity signal from event timing alone — the single most significant delta. A1/A2 (partners, community members) with a share grant gain inference power described in T4. A8 (legal compulsion) gains a category of evidence that is unusually admissible-looking. No adversary loses capability.
+
+**3. §7 design rules.**
+
+- Rule 3 (no plaintext labels) — **held.** Counter labels and units live in the encrypted snapshot only. Room state carries the existing `marker` event and nothing else; the room name must never be set to the graph name, which matters more here than elsewhere, since "alcohol" as a room name is self-disclosing.
+- Rule 12 (schema versioning) — **held.** `schema_version` → 2; v1 clients fail safe rather than silently dropping occurrence entries.
+- Rule 1 (default to least sharing) — **held.** No new sharing surface; occurrence graphs reuse the existing per-graph room and grant model unchanged.
+- Rule 5 (ephemerality is UX, not guarantee) and rule 13 (honest disclosure) — **outstanding.** See residual risk.
+- Rule 6 (heartbeats over event-driven leaks) — **violated in practice, inherited.** Not introduced by this feature, but this feature is where it starts to bite. Flagged as open item below rather than silently accepted.
+
+**4. Residual risk, in user-facing terms.** Your homeserver cannot read what you counted, but it can see *when you logged something* — and if you log drinks as you drink them, that timing is the information. Anyone you share an occurrence graph with, or who has shared history, can work out patterns you did not deliberately state: how often, how much, which nights, when you stopped and started again. Deleting an entry removes it from compliant clients going forward, but not from anyone's memory or screenshots.
+
+**5. New §6 entries.** None. Nothing new becomes undefendable; existing limits simply matter more.
+
+**Follow-ups opened** (added to §9):
+
+- Occurrence-specific onboarding disclosure covering the timing leak, since the "log it as it happens" UX actively encourages the behaviour that leaks (rules 5, 13).
+- Promote §T17 event-timing flattening from "future work" to a scoped v1.x item: batched/delayed writes matter much more for a per-tap counter than for occasional datapoints.
+- Consider a "log without timestamp precision" mode (round entries to the bucket) for users who want the totals without the timeline.

@@ -4,7 +4,7 @@
 // SCHEMA_VERSION (and update data_model.md §8) so older clients fail safe
 // rather than misrender unfamiliar shapes.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 // A Matrix user reference, in canonical "@user:server" form.
 export type UserRef = string;
@@ -13,7 +13,7 @@ export type UserRef = string;
 // render in local zone (data_model.md §3.4).
 export type Timestamp = string;
 
-export type GraphType = 'spectrum' | 'network';
+export type GraphType = 'spectrum' | 'network' | 'occurrence';
 
 // ─── Customization ──────────────────────────────────────────────────────────
 
@@ -98,6 +98,24 @@ export interface SpectrumView {
 }
 
 export type LegendPosition = 'top' | 'bottom' | 'left' | 'right' | 'hidden';
+
+// ─── Occurrence customization ───────────────────────────────────────────────
+
+export interface OccurrenceCustomization extends BaseCustomization {
+	bar_style?: {
+		// Bars are stacked per counter by default; 'grouped' puts one bar per
+		// counter side by side inside each bucket.
+		mode?: 'stacked' | 'grouped';
+		// Rolling mean drawn as a line over the bars, in buckets. 0 / unset
+		// hides it.
+		rolling_window?: number;
+	};
+	legend?: {
+		position: LegendPosition;
+	};
+	// Draw each counter's target as a dashed reference line on the chart.
+	show_targets?: boolean;
+}
 
 export interface NetworkCustomization extends BaseCustomization {
 	node_style?: {
@@ -246,9 +264,82 @@ export interface NetworkGraph extends BaseGraph {
 	edges: NetworkEdge[];
 }
 
+// ─── Occurrence graphs ──────────────────────────────────────────────────────
+//
+// Counting, not positioning: an occurrence graph records *that a thing
+// happened*, how much of it, and when. Drinks, cigarettes, doses, panic
+// attacks, gym sessions, misgenderings. See data_model.md §4A.
+
+// The period occurrences roll up into for charting and target comparison.
+export type OccurrenceBucket = 'day' | 'week' | 'month';
+
+// What a target asks of you. 'at_most' is a limit (drinks per week);
+// 'at_least' is a goal (gym sessions per week). Both are advisory — the app
+// never blocks an entry, it only reports.
+export type TargetDirection = 'at_most' | 'at_least';
+
+export interface CounterTarget {
+	amount: number;
+	period: OccurrenceBucket;
+	direction: TargetDirection;
+}
+
+// A one-tap entry. Counting apps live and die on these: "+1 pint" is the
+// only interaction most users ever perform, so the amounts they'd otherwise
+// type are stored on the counter itself.
+export interface CounterPreset {
+	id: string;
+	label: string;
+	// In the counter's unit — a pint is 2.3 UK units, a single is 1.
+	amount: number;
+}
+
+export interface Counter {
+	id: string;
+	label: string;
+	// Names what `amount` measures: "units", "cigarettes", "mg", "£". Kept
+	// free-form deliberately — the model does no unit conversion.
+	unit: string;
+	color?: string;
+	// Amount used by a bare "+1" tap when no preset is chosen. Defaults to 1.
+	step?: number;
+	presets?: CounterPreset[];
+	target?: CounterTarget;
+}
+
+export interface Occurrence {
+	id: string;
+	counter_id: string;
+	// When it happened — backdatable, since you log the drink after the
+	// drink. UTC, like every other timestamp (§3.4).
+	timestamp: Timestamp;
+	// In the counter's unit. Always explicit, even for pure "did it happen"
+	// counters, where it is 1.
+	amount: number;
+	notes?: string;
+	tags?: string[];
+}
+
+export interface OccurrenceSchema {
+	counters: Counter[];
+	// Bucket the chart opens on. Defaults to 'day'.
+	default_bucket?: OccurrenceBucket;
+	// Local hour (0–23) at which a new day begins for bucketing purposes.
+	// 4 means a 2am drink counts toward the night before — the thing every
+	// drink tracker gets asked for. Defaults to 0.
+	day_start_hour?: number;
+}
+
+export interface OccurrenceGraph extends BaseGraph {
+	type: 'occurrence';
+	schema: OccurrenceSchema;
+	customization: OccurrenceCustomization;
+	occurrences: Occurrence[];
+}
+
 // ─── Discriminated union ────────────────────────────────────────────────────
 
-export type Graph = SpectrumGraph | NetworkGraph;
+export type Graph = SpectrumGraph | NetworkGraph | OccurrenceGraph;
 
 // ─── Type guards ────────────────────────────────────────────────────────────
 
@@ -258,4 +349,8 @@ export function isSpectrum(graph: Graph): graph is SpectrumGraph {
 
 export function isNetwork(graph: Graph): graph is NetworkGraph {
 	return graph.type === 'network';
+}
+
+export function isOccurrence(graph: Graph): graph is OccurrenceGraph {
+	return graph.type === 'occurrence';
 }

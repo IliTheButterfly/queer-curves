@@ -4,13 +4,18 @@
 		SCHEMA_VERSION,
 		type Axis,
 		type AxisRef,
+		type Counter,
+		type CounterPreset,
 		type EdgeType,
 		type Graph,
 		type NetworkGraph,
+		type OccurrenceBucket,
+		type OccurrenceGraph,
 		type PointWaypoint,
 		type Region,
 		type SpectrumGraph,
-		type SpectrumView
+		type SpectrumView,
+		type TargetDirection
 	} from '$lib/types.js';
 	import { palettes, type Palette } from '$lib/presets/palettes.js';
 	import { generateGraphId } from '$lib/store/graphs.js';
@@ -18,7 +23,7 @@
 	import PaletteSwatch from '$lib/ui/PaletteSwatch.svelte';
 	import RegionEditor from '$lib/ui/RegionEditor.svelte';
 
-	type GraphType = 'spectrum' | 'network';
+	type GraphType = 'spectrum' | 'network' | 'occurrence';
 
 	let {
 		initial,
@@ -229,6 +234,130 @@
 		)
 	);
 
+	// ─── Occurrence form state ───────────────────────────────────────────────
+	//
+	// Flattened for `bind:` — `target` is optional on the persisted Counter,
+	// but a form needs somewhere to hold the values while the checkbox is
+	// off, so it lives here as always-present fields plus `hasTarget`.
+	type EditableCounter = {
+		id: string;
+		label: string;
+		unit: string;
+		color: string;
+		step: number;
+		hasTarget: boolean;
+		targetAmount: number;
+		targetPeriod: OccurrenceBucket;
+		targetDirection: TargetDirection;
+		presets: CounterPreset[];
+	};
+
+	function newCounterId(): string {
+		return `ctr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+	}
+
+	function toEditableCounter(c: Counter, idx: number): EditableCounter {
+		return {
+			id: c.id,
+			label: c.label,
+			unit: c.unit,
+			color: c.color ?? palettes[0].colors[idx % palettes[0].colors.length] ?? '#c98aff',
+			step: c.step ?? 1,
+			hasTarget: c.target !== undefined,
+			targetAmount: c.target?.amount ?? 1,
+			targetPeriod: c.target?.period ?? 'day',
+			targetDirection: c.target?.direction ?? 'at_most',
+			presets: (c.presets ?? []).map((p) => ({ ...p }))
+		};
+	}
+
+	let counters = $state<EditableCounter[]>(
+		untrack(() =>
+			initial?.type === 'occurrence'
+				? initial.schema.counters.map(toEditableCounter)
+				: [
+						{
+							id: 'ctr-1',
+							label: '',
+							unit: 'units',
+							color: '#c98aff',
+							step: 1,
+							hasTarget: false,
+							targetAmount: 1,
+							targetPeriod: 'day',
+							targetDirection: 'at_most',
+							presets: []
+						}
+					]
+		)
+	);
+
+	let defaultBucket = $state<OccurrenceBucket>(
+		untrack(() =>
+			initial?.type === 'occurrence' ? (initial.schema.default_bucket ?? 'day') : 'day'
+		)
+	);
+	let dayStartHour = $state<number>(
+		untrack(() => (initial?.type === 'occurrence' ? (initial.schema.day_start_hour ?? 0) : 0))
+	);
+	let rollingWindow = $state<number>(
+		untrack(() =>
+			initial?.type === 'occurrence' ? (initial.customization.bar_style?.rolling_window ?? 0) : 0
+		)
+	);
+	let barMode = $state<'stacked' | 'grouped'>(
+		untrack(() =>
+			initial?.type === 'occurrence'
+				? (initial.customization.bar_style?.mode ?? 'stacked')
+				: 'stacked'
+		)
+	);
+
+	// How many logged entries point at each counter id. Deleting a counter
+	// that has history would orphan those entries — they'd stop appearing in
+	// any total while still bloating the snapshot — so removal is blocked
+	// until the entries are gone, the same way spectrum dimensions lock.
+	const counterUsage = $derived.by(() => {
+		const usage = new Map<string, number>();
+		if (initial?.type !== 'occurrence') return usage;
+		for (const o of initial.occurrences) {
+			usage.set(o.counter_id, (usage.get(o.counter_id) ?? 0) + 1);
+		}
+		return usage;
+	});
+
+	function addCounter() {
+		const colors = selectedPalette.colors;
+		counters.push({
+			id: newCounterId(),
+			label: '',
+			unit: 'units',
+			color: colors[counters.length % colors.length] ?? '#c98aff',
+			step: 1,
+			hasTarget: false,
+			targetAmount: 1,
+			targetPeriod: 'day',
+			targetDirection: 'at_most',
+			presets: []
+		});
+	}
+
+	function removeCounter(idx: number) {
+		counters = counters.filter((_, i) => i !== idx);
+	}
+
+	function addPreset(counterIdx: number) {
+		counters[counterIdx].presets.push({
+			id: `pre-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+			label: '',
+			amount: counters[counterIdx].step || 1
+		});
+	}
+
+	function removePreset(counterIdx: number, presetIdx: number) {
+		counters[counterIdx].presets = counters[counterIdx].presets.filter((_, i) => i !== presetIdx);
+	}
+
 	function findMatchingPalette(colors: string[]): string {
 		for (const p of palettes) {
 			if (
@@ -403,6 +532,83 @@
 			} satisfies SpectrumGraph;
 		}
 
+		if (type === 'occurrence') {
+			// Keep any counter that's either named or already carries history —
+			// blanking the label of a counter with entries must not silently
+			// drop it and orphan them.
+			const validCounters: Counter[] = counters
+				.filter((c) => c.label.trim() !== '' || (counterUsage.get(c.id) ?? 0) > 0)
+				.map((c) => {
+					const out: Counter = {
+						id: c.id,
+						label: c.label.trim() || 'unnamed',
+						unit: c.unit.trim() || 'units',
+						color: c.color
+					};
+					// Step 1 is the default; omit it rather than storing it.
+					if (Number.isFinite(c.step) && c.step > 0 && c.step !== 1) out.step = c.step;
+					const presets = c.presets
+						.filter((p) => p.label.trim() !== '' && Number.isFinite(p.amount))
+						.map((p) => ({ id: p.id, label: p.label.trim(), amount: p.amount }));
+					if (presets.length > 0) out.presets = presets;
+					if (c.hasTarget && Number.isFinite(c.targetAmount)) {
+						out.target = {
+							amount: c.targetAmount,
+							period: c.targetPeriod,
+							direction: c.targetDirection
+						};
+					}
+					return out;
+				});
+
+			const occurrenceSchema = {
+				counters: validCounters,
+				default_bucket: defaultBucket,
+				...(dayStartHour > 0 ? { day_start_hour: dayStartHour } : {})
+			};
+			const barStyle = {
+				...(barMode === 'grouped' ? { mode: 'grouped' as const } : {}),
+				...(rollingWindow >= 2 ? { rolling_window: rollingWindow } : {})
+			};
+
+			if (initial?.type === 'occurrence') {
+				return {
+					...initial,
+					name,
+					description: description || undefined,
+					modified_at: now,
+					schema_version: SCHEMA_VERSION,
+					schema: occurrenceSchema,
+					customization: {
+						...initial.customization,
+						theme: { ...initial.customization.theme, palette: colors },
+						title: { show: true, text: name },
+						bar_style: Object.keys(barStyle).length > 0 ? barStyle : undefined
+					}
+				} satisfies OccurrenceGraph;
+			}
+
+			return {
+				id: generateGraphId(),
+				type: 'occurrence',
+				name,
+				description: description || undefined,
+				created_at: now,
+				modified_at: now,
+				schema_version: SCHEMA_VERSION,
+				owner: '@local:queer-curves',
+				editors: [],
+				schema: occurrenceSchema,
+				customization: {
+					theme: { palette: colors },
+					title: { show: true, text: name },
+					legend: { position: 'bottom' },
+					...(Object.keys(barStyle).length > 0 ? { bar_style: barStyle } : {})
+				},
+				occurrences: []
+			} satisfies OccurrenceGraph;
+		}
+
 		const validEdgeTypes = edgeTypes.filter((et) => et.label.trim() !== '');
 
 		if (initial?.type === 'network') {
@@ -464,6 +670,16 @@
 				<span>
 					<strong>Network</strong>
 					<small>People and typed connections between them — polycules, friend graphs.</small>
+				</span>
+			</label>
+			<label class="radio">
+				<input type="radio" bind:group={type} value="occurrence" />
+				<span>
+					<strong>Occurrence</strong>
+					<small>
+						Counting things as they happen — drinks, doses, cigarettes, panic attacks, gym sessions.
+						One-tap logging, per-period totals, optional limits.
+					</small>
 				</span>
 			</label>
 		</fieldset>
@@ -778,6 +994,147 @@
 				<button type="button" class="ghost" onclick={addCustomView}>+ add view</button>
 			</fieldset>
 		{/if}
+	{:else if type === 'occurrence'}
+		<fieldset class="counters-fieldset">
+			<legend>Counters</legend>
+			<p class="hint">
+				One counter per thing you're counting. <strong>Unit</strong> names what the amount measures
+				(units of alcohol, cigarettes, mg, £) — nothing is converted, so pick whatever you think in.
+				<strong>Step</strong> is what a single tap logs.
+			</p>
+			{#each counters as c, i (c.id)}
+				{@const used = counterUsage.get(c.id) ?? 0}
+				<div class="counter-block">
+					<div class="counter-main">
+						<input type="text" bind:value={c.label} placeholder="beer" maxlength="60" />
+						<input
+							type="text"
+							bind:value={c.unit}
+							placeholder="units"
+							maxlength="24"
+							class="unit"
+						/>
+						<label class="inline-num">
+							<span class="muted">step</span>
+							<input type="number" step="any" min="0" bind:value={c.step} />
+						</label>
+						<ColorPickerWithPalette
+							bind:value={counters[i].color}
+							paletteColors={selectedPalette.colors}
+							ariaLabel="counter colour"
+						/>
+						{#if counters.length > 1}
+							<button
+								type="button"
+								class="ghost remove"
+								onclick={() => removeCounter(i)}
+								disabled={used > 0}
+								title={used > 0
+									? `${used} logged ${used === 1 ? 'entry uses' : 'entries use'} this counter — delete them first`
+									: 'remove counter'}
+								aria-label="remove counter"
+							>
+								×
+							</button>
+						{/if}
+					</div>
+
+					{#if used > 0}
+						<p class="hint locked-note">
+							{used} logged {used === 1 ? 'entry' : 'entries'} — can't be deleted while they exist.
+						</p>
+					{/if}
+
+					<div class="target-row">
+						<label class="check">
+							<input type="checkbox" bind:checked={c.hasTarget} />
+							<span>Target</span>
+						</label>
+						{#if c.hasTarget}
+							<select bind:value={c.targetDirection}>
+								<option value="at_most">at most</option>
+								<option value="at_least">at least</option>
+							</select>
+							<input type="number" step="any" min="0" bind:value={c.targetAmount} class="tgt-num" />
+							<span class="muted">{c.unit || 'units'} per</span>
+							<select bind:value={c.targetPeriod}>
+								<option value="day">day</option>
+								<option value="week">week</option>
+								<option value="month">month</option>
+							</select>
+						{/if}
+					</div>
+
+					<div class="presets-block">
+						<div class="presets-header">
+							<span class="label">
+								Quick-add presets
+								<small class="muted">— one tap each, e.g. "pint" = 2.3</small>
+							</span>
+							<button type="button" class="ghost" onclick={() => addPreset(i)}>+ add</button>
+						</div>
+						{#each c.presets as p, pi (p.id)}
+							<div class="preset-row">
+								<input type="text" bind:value={p.label} placeholder="pint" maxlength="40" />
+								<input type="number" step="any" bind:value={p.amount} placeholder="amount" />
+								<button
+									type="button"
+									class="ghost remove"
+									onclick={() => removePreset(i, pi)}
+									aria-label="remove preset"
+								>
+									×
+								</button>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/each}
+			<button type="button" class="ghost" onclick={addCounter}>+ add counter</button>
+		</fieldset>
+
+		<fieldset>
+			<legend>Chart</legend>
+			<div class="row">
+				<label class="field">
+					<span class="label">Roll up by</span>
+					<select bind:value={defaultBucket}>
+						<option value="day">day</option>
+						<option value="week">week</option>
+						<option value="month">month</option>
+					</select>
+				</label>
+				<label class="field">
+					<span class="label">Bars</span>
+					<select bind:value={barMode}>
+						<option value="stacked">stacked by counter</option>
+						<option value="grouped">side by side</option>
+					</select>
+				</label>
+			</div>
+			<div class="row">
+				<label class="field">
+					<span class="label">
+						Day starts at <small class="muted">(local hour)</small>
+					</span>
+					<select bind:value={dayStartHour}>
+						{#each Array(24) as _, h (h)}
+							<option value={h}>{String(h).padStart(2, '0')}:00</option>
+						{/each}
+					</select>
+				</label>
+				<label class="field">
+					<span class="label">
+						Trend line <small class="muted">(rolling mean, 0 = off)</small>
+					</span>
+					<input type="number" min="0" max="90" step="1" bind:value={rollingWindow} />
+				</label>
+			</div>
+			<p class="hint">
+				A day start of 04:00 counts a 2am drink toward the night before — the boundary most people
+				actually live by.
+			</p>
+		</fieldset>
 	{:else}
 		<fieldset>
 			<legend>Edge types</legend>
@@ -975,6 +1332,107 @@
 		padding: var(--space-2);
 		border-radius: 4px;
 		font: inherit;
+	}
+
+	.counter-block {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+		padding: var(--space-3);
+		background: rgba(255, 255, 255, 0.02);
+		border: 1px solid rgba(255, 255, 255, 0.06);
+		border-radius: 4px;
+	}
+	.counter-main {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 110px auto auto auto;
+		gap: var(--space-2);
+		align-items: center;
+	}
+	.counter-main input[type='text'],
+	.counter-main input[type='number'] {
+		background: rgba(0, 0, 0, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-fg);
+		padding: var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+		min-width: 0;
+	}
+	.inline-num {
+		display: inline-flex;
+		gap: var(--space-1);
+		align-items: center;
+		font-size: 0.85em;
+	}
+	.inline-num input {
+		width: 70px;
+	}
+	.target-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+		align-items: center;
+		font-size: 0.9em;
+	}
+	.target-row .tgt-num {
+		width: 80px;
+		background: rgba(0, 0, 0, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-fg);
+		padding: var(--space-1) var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+	}
+	.check {
+		display: inline-flex;
+		gap: var(--space-1);
+		align-items: center;
+		cursor: pointer;
+	}
+	.presets-block {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+	}
+	.presets-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: var(--space-2);
+	}
+	.presets-header .label {
+		font-size: 0.85em;
+		color: var(--color-muted);
+	}
+	.preset-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 110px auto;
+		gap: var(--space-2);
+		align-items: center;
+	}
+	.preset-row input {
+		background: rgba(0, 0, 0, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-fg);
+		padding: var(--space-1) var(--space-2);
+		border-radius: 4px;
+		font: inherit;
+		min-width: 0;
+	}
+	.locked-note {
+		margin: 0;
+	}
+	button.ghost:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+	button.ghost:disabled:hover {
+		background: transparent;
+		border-color: rgba(255, 255, 255, 0.15);
+	}
+	.muted {
+		color: var(--color-muted);
 	}
 
 	.pwp-row {

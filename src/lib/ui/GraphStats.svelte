@@ -1,5 +1,18 @@
 <script lang="ts">
 	import type { Graph } from '$lib/types.js';
+	import {
+		buildBuckets,
+		busiestWeekday,
+		counterTotals,
+		defaultBucketOf,
+		formatAmount,
+		formatBucketLabel,
+		formatElapsed,
+		msSinceLast,
+		targetStatuses,
+		WEEKDAY_NAMES,
+		type Bucket
+	} from '$lib/graphs/occurrence/aggregate.js';
 
 	let { graph }: { graph: Graph } = $props();
 
@@ -80,6 +93,42 @@
 		}
 
 		return { count: N, axes: axisStats, timeSpan, avgInterval, trajectoryLen, normalizedLen };
+	});
+
+	// Occurrence stats — the figures a counting app puts on its summary
+	// screen: totals, per-period averages, target adherence and streaks.
+	const occurrenceStats = $derived.by(() => {
+		if (graph.type !== 'occurrence') return null;
+		const now = new Date();
+		const bucket = defaultBucketOf(graph);
+		const series = buildBuckets(graph, bucket, now);
+		const totals = counterTotals(graph);
+		const N = graph.occurrences.length;
+
+		// Mean per bucket counts the empty buckets too — averaging only the
+		// days you drank flatters the number badly.
+		const meanPerBucket =
+			series.buckets.length > 0
+				? series.buckets.reduce((s, b) => s + b.total, 0) / series.buckets.length
+				: null;
+		const activeBuckets = series.buckets.filter((b) => b.count > 0).length;
+		const peak = series.buckets.reduce<Bucket | null>(
+			(best, b) => (best === null || b.total > best.total ? b : best),
+			null
+		);
+
+		return {
+			count: N,
+			bucket,
+			totals,
+			meanPerBucket,
+			activeBuckets,
+			bucketCount: series.buckets.length,
+			peak,
+			targets: targetStatuses(graph, now),
+			since: msSinceLast(graph, null, now),
+			busiest: busiestWeekday(graph)
+		};
 	});
 
 	const networkStats = $derived.by(() => {
@@ -209,6 +258,109 @@
 					{/each}
 				</tbody>
 			</table>
+		{/if}
+	</section>
+{:else if graph.type === 'occurrence' && occurrenceStats}
+	<section class="stats-panel">
+		<h3>Stats</h3>
+		<dl class="kv">
+			<div>
+				<dt>Entries</dt>
+				<dd>{occurrenceStats.count}</dd>
+			</div>
+			{#if occurrenceStats.since !== null}
+				<div>
+					<dt>Since last</dt>
+					<dd>{formatElapsed(occurrenceStats.since)}</dd>
+				</div>
+			{/if}
+			{#if occurrenceStats.meanPerBucket !== null}
+				<div>
+					<dt>Avg per {occurrenceStats.bucket}</dt>
+					<dd>{fmtNum(occurrenceStats.meanPerBucket, 2)}</dd>
+				</div>
+			{/if}
+			{#if occurrenceStats.bucketCount > 0}
+				<div>
+					<dt>{occurrenceStats.bucket}s with entries</dt>
+					<dd>
+						{occurrenceStats.activeBuckets} / {occurrenceStats.bucketCount}
+					</dd>
+				</div>
+			{/if}
+			{#if occurrenceStats.peak && occurrenceStats.peak.total > 0}
+				<div>
+					<dt>Heaviest {occurrenceStats.bucket}</dt>
+					<dd>
+						{formatAmount(occurrenceStats.peak.total)}
+						<small class="muted">
+							({formatBucketLabel(occurrenceStats.peak.start, occurrenceStats.bucket)})
+						</small>
+					</dd>
+				</div>
+			{/if}
+			{#if occurrenceStats.busiest}
+				<div>
+					<dt>Busiest weekday</dt>
+					<dd>
+						{WEEKDAY_NAMES[occurrenceStats.busiest.weekday]}
+						<small class="muted">({formatAmount(occurrenceStats.busiest.total)})</small>
+					</dd>
+				</div>
+			{/if}
+		</dl>
+
+		{#if occurrenceStats.totals.length > 0}
+			<table class="axis-table">
+				<thead>
+					<tr>
+						<th>counter</th>
+						<th>entries</th>
+						<th>total</th>
+						<th>avg each</th>
+						<th class="muted">unit</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each occurrenceStats.totals as t (t.counter.id)}
+						<tr>
+							<td>{t.counter.label}</td>
+							<td>{t.count}</td>
+							<td>{formatAmount(t.total)}</td>
+							<td>{t.mean === null ? '—' : fmtNum(t.mean, 2)}</td>
+							<td class="muted">{t.counter.unit}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		{/if}
+
+		{#if occurrenceStats.targets.length > 0}
+			<h4>Targets</h4>
+			<ul class="type-list">
+				{#each occurrenceStats.targets as t (t.counter.id)}
+					<li>
+						<span>{t.counter.label}</span>
+						<span class="target-figure" class:over={!t.ok}>
+							{formatAmount(t.current)}/{formatAmount(t.target)}
+							<small class="muted">
+								{t.direction === 'at_most' ? 'max' : 'min'} per {t.period}
+							</small>
+						</span>
+						<span class="count muted">
+							{#if t.streak > 0}
+								{t.streak}
+								{t.period}{t.streak === 1 ? '' : 's'} on track
+								{#if t.bestStreak > t.streak}(best {t.bestStreak}){/if}
+							{:else if t.bestStreak > 0}
+								best {t.bestStreak}
+							{:else}
+								—
+							{/if}
+						</span>
+					</li>
+				{/each}
+			</ul>
 		{/if}
 	</section>
 {:else if graph.type === 'network' && networkStats}
@@ -355,5 +507,12 @@
 	.type-list .count {
 		margin-left: auto;
 		font-family: var(--font-mono);
+	}
+	.target-figure {
+		font-family: var(--font-mono);
+		color: var(--color-fg);
+	}
+	.target-figure.over {
+		color: rgba(255, 150, 150, 1);
 	}
 </style>

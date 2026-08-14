@@ -198,13 +198,13 @@ Both are useless headless — use the driver.
 ## Test
 
 ```bash
-pnpm lint && pnpm check && pnpm test     # 5 files / 62 tests, all passing
+pnpm lint && pnpm check && pnpm test     # 6 files / 104 tests, all passing
 pnpm build                               # adapter-static → build/, ~7s
 ```
 
 `pnpm test` prints two `stderr |` blocks with stack traces (from
 `graphs.test.ts`'s deliberate failure-path tests). Those are expected — read the
-final `Tests 62 passed` line, not the noise.
+final `Tests 104 passed` line, not the noise.
 
 **`pnpm lint` covers `.claude/`.** Prettier and ESLint both lint `driver.mjs`, so
 run `pnpm prettier --write .claude/skills/run-queer-curves/driver.mjs` after

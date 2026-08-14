@@ -130,6 +130,11 @@
 			const n = g.datapoints.length;
 			return `${g.schema.dimensions}D spectrum · ${n} datapoint${n === 1 ? '' : 's'}`;
 		}
+		if (g.type === 'occurrence') {
+			const n = g.occurrences.length;
+			const c = g.schema.counters.length;
+			return `occurrence · ${c} counter${c === 1 ? '' : 's'} · ${n} ${n === 1 ? 'entry' : 'entries'}`;
+		}
 		return `network · ${g.nodes.length} nodes · ${g.edges.length} edges`;
 	}
 </script>

@@ -2,7 +2,13 @@
 // data model must always remain expressible against — useful for dev,
 // demos, and tests.
 
-import { SCHEMA_VERSION, type NetworkGraph, type SpectrumGraph } from './types.js';
+import {
+	SCHEMA_VERSION,
+	type NetworkGraph,
+	type Occurrence,
+	type OccurrenceGraph,
+	type SpectrumGraph
+} from './types.js';
 
 const now = '2026-05-07T12:00:00Z';
 const placeholderOwner = '@example:queercurves.app';
@@ -201,10 +207,96 @@ export const polyculeRedactedFixture: NetworkGraph = {
 	edges: polyculeFixture.edges.map((e) => ({ ...e, type_id: 'any' }))
 };
 
+// ─── Drinks: occurrence (data_model.md §11.4) ───────────────────────────────
+//
+// The counting-app case: two counters in different units, quick-add presets
+// for the drinks you actually order, a weekly limit on one of them, and a
+// 4am day boundary so a late night lands on the night it belongs to.
+
+// Timestamps are literal so the fixture is deterministic; they sit just
+// before `now` (2026-05-07) so the chart has a populated recent window.
+const drinkEntries: Occurrence[] = [
+	{ id: 'oc-1', counter_id: 'alcohol', timestamp: '2026-05-01T19:30:00Z', amount: 2.3 },
+	{
+		id: 'oc-2',
+		counter_id: 'alcohol',
+		timestamp: '2026-05-01T21:10:00Z',
+		amount: 2.3,
+		tags: ['pub']
+	},
+	{ id: 'oc-3', counter_id: 'alcohol', timestamp: '2026-05-02T01:15:00Z', amount: 1 },
+	{ id: 'oc-4', counter_id: 'caffeine', timestamp: '2026-05-02T09:00:00Z', amount: 1 },
+	{ id: 'oc-5', counter_id: 'caffeine', timestamp: '2026-05-02T14:20:00Z', amount: 2 },
+	{
+		id: 'oc-6',
+		counter_id: 'alcohol',
+		timestamp: '2026-05-04T20:00:00Z',
+		amount: 1.5,
+		notes: 'one glass with dinner'
+	},
+	{ id: 'oc-7', counter_id: 'caffeine', timestamp: '2026-05-05T08:40:00Z', amount: 1 },
+	{ id: 'oc-8', counter_id: 'caffeine', timestamp: '2026-05-06T08:30:00Z', amount: 1 },
+	{
+		id: 'oc-9',
+		counter_id: 'alcohol',
+		timestamp: '2026-05-06T22:00:00Z',
+		amount: 2.3,
+		tags: ['stressed']
+	},
+	{ id: 'oc-10', counter_id: 'caffeine', timestamp: '2026-05-07T09:15:00Z', amount: 2 }
+];
+
+export const drinksFixture: OccurrenceGraph = {
+	id: 'fixture-drinks',
+	type: 'occurrence',
+	name: 'what I drink',
+	description: 'Alcohol units and coffees, counted as they happen.',
+	created_at: now,
+	modified_at: now,
+	schema_version: SCHEMA_VERSION,
+	owner: placeholderOwner,
+	editors: [],
+	schema: {
+		counters: [
+			{
+				id: 'alcohol',
+				label: 'alcohol',
+				unit: 'units',
+				color: '#c98aff',
+				step: 1,
+				presets: [
+					{ id: 'p-pint', label: 'pint', amount: 2.3 },
+					{ id: 'p-wine', label: 'glass of wine', amount: 2.1 },
+					{ id: 'p-single', label: 'single', amount: 1 }
+				],
+				target: { amount: 14, period: 'week', direction: 'at_most' }
+			},
+			{
+				id: 'caffeine',
+				label: 'coffee',
+				unit: 'cups',
+				color: '#ffd080',
+				step: 1,
+				presets: [{ id: 'p-double', label: 'double shot', amount: 2 }]
+			}
+		],
+		default_bucket: 'day',
+		day_start_hour: 4
+	},
+	customization: {
+		theme: baseTheme,
+		title: { show: true, text: 'what I drink' },
+		legend: { position: 'bottom' },
+		bar_style: { mode: 'stacked', rolling_window: 7 }
+	},
+	occurrences: drinkEntries
+};
+
 export const allFixtures = [
 	acefluxFixture,
 	genderfluidFixture,
 	moodEnergyFixture,
 	polyculeFixture,
-	polyculeRedactedFixture
+	polyculeRedactedFixture,
+	drinksFixture
 ];

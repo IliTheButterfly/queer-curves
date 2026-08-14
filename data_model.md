@@ -2,7 +2,7 @@
 
 This document defines the domain model for queer-curves: what users create, what shape it has, and what the system stores. The Matrix event encoding is sketched at the end, but full schema is out of scope here (see `sharing_model.md` once written).
 
-Status: **draft**, v0. Updated 2026-05-07.
+Status: **draft**, v0. Updated 2026-08-14.
 
 ## 1. Overview
 
@@ -15,14 +15,15 @@ A user creates and maintains **Graphs**. Each Graph is a self-contained artifact
 - a **sharing config** (referenced here, defined in `sharing_model.md`),
 - an **owner** and optional **editors**.
 
-The two graph families currently supported are derived from canonical use cases the user provided:
+The graph families currently supported are derived from canonical use cases the user provided:
 
 | Family | Purpose | Canonical example |
 |---|---|---|
 | Spectrum | Identity in an N-dimensional coordinate space, tracked over time | aceflux (1D), genderfluid (2D) |
 | Network | Relational data (people and typed connections) | polycule |
+| Occurrence | Discrete events counted over time, with optional per-period targets | alcohol units, cigarettes, doses |
 
-These two are sufficient for v1. Adding new graph families later is expected — the model leaves room.
+Adding further graph families is expected — the model leaves room. Occurrence was the first such addition (see §4A and the decisions log).
 
 ## 2. Common Graph fields
 
@@ -31,7 +32,7 @@ Every Graph, regardless of type, carries:
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | stable identifier; in Matrix encoding this is the room id |
-| `type` | `"spectrum"` \| `"network"` | extensible |
+| `type` | `"spectrum"` \| `"network"` \| `"occurrence"` | extensible |
 | `name` | string | user-set, e.g. "my gender" |
 | `description` | string | user-set, optional |
 | `created_at` | timestamp | |
@@ -187,9 +188,82 @@ Per-viewer legend redaction (the case where some viewers see "sexual" labels and
 
 For v1, network graphs store a **current state only** — list of nodes, edges, edge types. Historical replay (a timeline of "Alex joined the polycule on date X, Bob's edge to Carol changed to type Y on date Z") is deferred to v2; the protocol leaves room (every mutation could be its own event) but the v1 client will treat the network as point-in-time.
 
+## 4A. Occurrence graphs
+
+An occurrence graph counts discrete events over time: alcohol units, cigarettes, doses, panic attacks, gym sessions, misgenderings, migraines. Where a spectrum graph answers *where am I*, an occurrence graph answers *how much, how often, and when did I last*.
+
+(Numbered `4A` rather than `5` deliberately — inserting a section here would renumber §5–§12, and both the code and the other design docs cross-reference those numbers.)
+
+The design is taken from what dedicated counting apps converged on: one-tap entry above all else, per-unit presets so the tap records a real quantity, roll-ups into days/weeks/months rather than a continuous line, and an optional target that reports rather than nags.
+
+### 4A.1 Counters
+
+A graph defines one or more **counters** — the distinct things being counted. Counters are the occurrence-graph analogue of axes.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | stable |
+| `label` | string | user-set, e.g. "alcohol", "coffee" |
+| `unit` | string | free-form; names what `amount` measures ("units", "cigarettes", "mg", "£", "cups") |
+| `color` | string | optional; clients fall back to a palette cycle by counter index |
+| `step` | number | amount recorded by a bare one-tap add; defaults to `1` |
+| `presets` | list of `{id, label, amount}` | optional one-tap quantities, e.g. `pint` = 2.3 units |
+| `target` | `{amount, period, direction}` | optional; see §4A.4 |
+
+**Units are never converted.** The model stores whatever the user thinks in; two counters with different units are never summed together (clients must subtotal per counter, not across them).
+
+**A counter with logged occurrences cannot be deleted.** Removing it would orphan those entries — they would vanish from every total while still occupying space in the snapshot. Clients must block the deletion until the entries are gone.
+
+### 4A.2 Occurrences
+
+An occurrence is one logged event.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | stable; lets us correct/redact a single entry |
+| `counter_id` | string | must reference a counter in the same graph's schema |
+| `timestamp` | timestamp | when it happened — backdatable, since people log the drink *after* the drink. UTC (§3.4) |
+| `amount` | number | in the counter's unit. Always explicit, `1` for pure "did it happen" counters |
+| `notes` | string | optional |
+| `tags` | string[] | optional, e.g. "party", "stressed", "post-therapy" |
+
+Correction and deletion follow §3.5 exactly: a fresh event supersedes, a redaction removes, and compliant clients wipe rather than hide.
+
+### 4A.3 Buckets and the day boundary
+
+Occurrences roll up into **buckets** for charting and target comparison: `day`, `week` (Monday-start), or `month`. `schema.default_bucket` sets which the chart opens on (default `day`).
+
+**`schema.day_start_hour`** (0–23, default 0) shifts the local day boundary. With `day_start_hour = 4`, a 2am drink counts toward the night before. This exists because it is the single most-requested behaviour in drink trackers, and because a calendar-midnight boundary splits one evening into two days and makes both the daily totals and any streak wrong.
+
+Bucketing is **local-time**, always, even though timestamps are stored UTC — people count in their own days. Weeks and months inherit the same hour shift (a week starts Monday at `day_start_hour`; a month starts the 1st at `day_start_hour`).
+
+Bucket series are **dense**: every bucket between the first occurrence and now exists, including the empty ones. A gap in a drinks chart is information and must be drawn, not skipped.
+
+Charts show a **trailing window** over that dense series (default 45 days / 26 weeks / 12 months), because a year of daily bars is unreadable. Statistics still run over the whole series. When the trailing window happens to be entirely empty — a graph nobody has logged to in months — it slides back to end at the last bucket with data, and the chart **must say so** ("nothing logged since …"). An x axis that stops in May while today is August, with no such label, reads as "up to now" and is a lie.
+
+### 4A.4 Targets
+
+A counter may carry one target:
+
+| Field | Type | Notes |
+|---|---|---|
+| `amount` | number | in the counter's unit |
+| `period` | `"day"` \| `"week"` \| `"month"` | the bucket the target is measured over |
+| `direction` | `"at_most"` \| `"at_least"` | a limit (drinks per week) vs. a goal (gym sessions per week) |
+
+Targets are **advisory**. The app never blocks or warns off an entry; it reports the current period's total against the target and leaves the judgement to the user. This is a deliberate stance: the tool is for people tracking things about themselves, and a counter that scolds gets abandoned or lied to, which destroys the data it exists to collect.
+
+**Streaks count completed periods only.** The period you are still living in has not yet kept its limit, so including it would reset every streak at midnight and then un-reset it. Clients report the current period's running total separately from the streak.
+
+**A target line is only drawn when its `period` matches the chart's bucket.** A weekly limit drawn across daily bars reads as a daily limit, which misleads in the most harmful direction available.
+
+### 4A.5 Occurrence history rendering
+
+Bars, not lines: occurrences are discrete counts inside a period, and a line between two buckets implies in-between values that never existed. Multiple counters stack within a bucket by default, or sit side by side (`bar_style.mode`). An optional rolling mean over N buckets (`bar_style.rolling_window`) gives the trend, which is what distinguishes a bad week from a bad direction.
+
 ## 5. Customization
 
-Common to both families:
+Common to every family:
 
 | Field | Type | Notes |
 |---|---|---|
@@ -217,6 +291,15 @@ Network-specific:
 | `node_style.shape` | `"circle"` \| `"square"` | |
 | `edge_style.default_width` | number | |
 | `legend.position` | `"top"` \| `"bottom"` \| `"left"` \| `"right"` \| `"hidden"` | |
+
+Occurrence-specific:
+
+| Field | Type | Notes |
+|---|---|---|
+| `bar_style.mode` | `"stacked"` \| `"grouped"` | how multiple counters share a bucket; default `stacked` |
+| `bar_style.rolling_window` | number | rolling mean over N buckets, drawn as a trend line; 0 / unset hides it |
+| `legend.position` | `"top"` \| `"bottom"` \| `"left"` \| `"right"` \| `"hidden"` | |
+| `show_targets` | bool | draw counter targets as dashed reference lines; default true (§4A.4) |
 
 Customization values can reference theme palette indices (`"@palette[2]"`) or be hard-coded hex — clients should resolve references at render time.
 
@@ -262,6 +345,8 @@ Every persisted event carries a `schema_version` integer. Clients reading older 
 Initial release: `schema_version = 1`.
 
 Backwards-incompatible changes (renaming required fields, changing semantics) bump the major version. Additive optional fields do not.
+
+**Current: `schema_version = 2`** — the occurrence family (§4A). A v1 client reading a v2 graph shows the "newer format" message and refuses the import; that is the intended behaviour, since a v1 client has no way to render or safely round-trip an occurrence graph and would otherwise drop its entries on the next save. The cost is that graphs of *any* type exported from a v2 client are also refused by a v1 client, which is acceptable pre-release and is the fail-safe direction to err in.
 
 ## 9. Matrix encoding (sketch only)
 
@@ -382,6 +467,37 @@ data:
 
 Two graphs from the owner's perspective, two rooms in Matrix, two encrypted views.
 
+### 10.4 Drinks — occurrence
+
+```yaml
+type: occurrence
+name: "what I drink"
+schema:
+  counters:
+    - id: "alcohol"
+      label: "alcohol"
+      unit: "units"
+      step: 1
+      presets:
+        - { id: "p-pint", label: "pint", amount: 2.3 }
+        - { id: "p-wine", label: "glass of wine", amount: 2.1 }
+        - { id: "p-single", label: "single", amount: 1 }
+      target: { amount: 14, period: "week", direction: "at_most" }
+    - id: "caffeine"
+      label: "coffee"
+      unit: "cups"
+      step: 1
+  default_bucket: "day"
+  day_start_hour: 4
+data:
+  occurrences:
+    - { id: "oc-1", counter_id: "alcohol", timestamp: "2026-05-01T19:30:00Z", amount: 2.3 }
+    - { id: "oc-3", counter_id: "alcohol", timestamp: "2026-05-02T01:15:00Z", amount: 1 }
+    - { id: "oc-4", counter_id: "caffeine", timestamp: "2026-05-02T09:00:00Z", amount: 1 }
+```
+
+Note `oc-3`: stored as 01:15 UTC on the 2nd, but in a UTC-ish local zone that is a pre-4am hour, so with `day_start_hour: 4` it buckets into the 1st's evening alongside `oc-1`. Which day it lands on depends on the *viewer's* zone — bucketing is local by design (§4A.3), so the same graph read from a different timezone can legitimately group it differently.
+
 ## 12. Decisions log
 
 **2026-05-07** — initial open questions resolved:
@@ -391,3 +507,11 @@ Two graphs from the owner's perspective, two rooms in Matrix, two encrypted view
 3. **Timestamps are UTC**, display TZ is client-local (§3.4).
 4. **Graph deletion is hard.** Tombstone + kick all members + wipe local caches on compliant clients (§7.3). Soft revocation (just stop publishing) is a separate operation, defined in `sharing_model.md`.
 5. **Linking nodes to real users requires consent.** A node's `subject_ref` triggers a consent request; the link is `pending` until accepted, and the named user can withdraw at any time (§4.1). Cross-graph navigation from such nodes is deferred (§10).
+
+**2026-08-14** — occurrence family added (§4A), `schema_version` → 2:
+
+6. **Occurrence is a third graph family, not a spectrum variant.** A 1D spectrum could hold a running count, but the two disagree on everything that matters: a spectrum interpolates between datapoints (a position persists until the next reading), while occurrences are discrete and additive (two drinks are 4.6 units, not "a position of 2.3 twice"). Aggregation, chart form, and entry UX all follow from that difference.
+7. **Units are per counter and never converted.** No unit registry, no mg↔ml, no standard-drink table. Users count in whatever they think in; the model refuses to guess. Consequence: totals are per counter, never summed across counters.
+8. **Bucketing is local-time with a configurable day boundary.** Timestamps stay UTC (§3.4), but people count in their own days, and a calendar-midnight boundary splits one evening across two days. `day_start_hour` fixes that (§4A.3). A viewer in another timezone may bucket the same graph differently — accepted, because the alternative (freezing the author's zone into the data) makes every reader's "today" wrong instead.
+9. **Targets report, never enforce.** No blocking, no warning dialogs, no nagging. A counter that scolds gets abandoned or lied to, and false data is worse than none. Streaks count completed periods only, so they don't reset at midnight (§4A.4).
+10. **Deleting a counter with logged entries is refused.** The alternative — orphaning the entries — makes them invisible to every total while still shipping them in each snapshot, which is the worst of both outcomes.
