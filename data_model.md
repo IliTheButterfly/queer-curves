@@ -275,6 +275,65 @@ Full Matrix protocol mapping lives in `sharing_model.md`. High-level:
   - `app.queercurves.tombstone` — soft revocation / graph deletion marker.
 - Matrix room state events are **not** used for graph data. Reason: state events in encrypted rooms are not themselves encrypted by default; the homeserver would see graph_def in plaintext, defeating E2EE for sensitive labels.
 
+## 9a. Collections and merging (multi-graph views)
+
+Two distinct answers to "I want to look at these graphs together". They share one implementation (`store/compose.ts`) and differ only in whether the result is persisted.
+
+(Numbered 9a rather than 10 so the existing §10–§12 cross-references in this document, in `CLAUDE.md`, and in code comments stay valid.)
+
+### 9a.1 Merging
+
+**Merge** takes N graphs and produces **one new graph** containing their combined data. It is **non-destructive**: the sources are neither modified nor deleted, so the undo for a merge is deleting the result. The output is an ordinary Graph at the current `schema_version` — no new event types, no new storage, importable by any client that could read the sources.
+
+Merge is only defined for graphs of the same `type`, and for spectrum graphs only when `dimensions` match. Everything else is a warning, not a refusal, because only the user knows whether two similarly-shaped graphs mean the same thing.
+
+Reconciliation rules:
+
+| Aspect | Rule |
+|---|---|
+| Axis names, labels, theme, customization | Taken from the **first** graph in the user's chosen order. Divergence is surfaced as a warning. |
+| Axis `range` | **Union** (`min` of mins, `max` of maxes). Coordinates are never rescaled — rescaling would silently change what a stored position means. |
+| Axis waypoints | Union, deduped by (position, label). |
+| Datapoints | Union, deduped by (timestamp, coordinates) so re-merging is idempotent rather than doubling. Sorted by timestamp. |
+| Element ids (datapoints, regions, waypoints, views, nodes, edges) | Kept as-is; **only collisions** are rewritten (`id~2`). Merging a single graph is therefore an identity operation on its ids. |
+| Provenance | Each datapoint gains a `from:<graph name>` tag when there is more than one source. |
+| Network nodes | Unified by `subject_ref` when set, otherwise by case- and whitespace-insensitive `label`. First occurrence wins; later ones only fill gaps. |
+| Network `link_status` | **Most restrictive wins** — any `denied` ⇒ `denied`; otherwise anything short of unanimous `confirmed` ⇒ `pending`. A merge must never manufacture consent (§4.1). |
+| Network edges | Endpoints remapped onto unified nodes, then deduped by (endpoints, type_id) — with endpoints order-normalised for undirected edges. Edges with a missing endpoint are dropped, not left dangling. |
+| Edge types | Union by id; first definition of a reused id wins, with a warning. |
+
+### 9a.2 Collections
+
+A **collection** is a saved list of graph ids that should be *rendered* together — a multi-graph view. It stores references, never copies:
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | `c_…` locally, room id when Matrix-backed |
+| `kind` | `"collection"` | discriminates from a Graph in storage and in the snapshot payload |
+| `name`, `description` | string | user-set |
+| `created_at`, `modified_at`, `schema_version`, `owner` | | as §2 |
+| `members` | list of `{ graph_id, color?, label? }` | ordered; `color` is the series colour and doubles as the legend key |
+| `view` | `SpectrumView` | optional remembered projection |
+
+Opening a collection loads each member through the ordinary graph store, composes them with the merge rules above (with `colorBySource` on, so each member's points carry its series colour), and hands the throwaway result to the normal renderer. Nothing composed is ever written down. Consequences, all deliberate:
+
+- edits to a member appear the next time the collection is opened;
+- members stay independently editable, shareable and revocable;
+- deleting a collection deletes only the list;
+- a member that can't be loaded — deleted, or shared from an account whose megolm keys haven't arrived — is **named in the UI**, never silently omitted. A view that quietly drops data is a view that lies.
+
+Collections are personal in v1: they are not shareable, and inviting someone to a collection is not a thing you can do. Sharing a *view over other people's graphs* raises the consent questions in `sharing_model.md` §12 without any of the machinery to answer them.
+
+### 9a.3 Matrix encoding
+
+A collection lives in its own E2EE room, same whole-snapshot protocol as graphs, with its own event types so the two kinds never appear in each other's listings:
+
+- `app.queercurves.collection.marker` — state event identifying the room
+- `app.queercurves.collection.snapshot` — the whole `GraphCollection`
+- `app.queercurves.tombstone` — shared with graphs; deletion
+
+Unlike graph rooms, a collection room is created **without an `m.room.name`**. Room names are unencrypted state and a collection's name ("me and Sam") is exactly the kind of label §7 rule 3 of `THREATS.md` keeps out of plaintext. The name travels in the encrypted snapshot instead.
+
 ## 10. Out of scope for v1
 
 Explicitly deferred (acknowledged but not implemented in MVP):
@@ -391,3 +450,12 @@ Two graphs from the owner's perspective, two rooms in Matrix, two encrypted view
 3. **Timestamps are UTC**, display TZ is client-local (§3.4).
 4. **Graph deletion is hard.** Tombstone + kick all members + wipe local caches on compliant clients (§7.3). Soft revocation (just stop publishing) is a separate operation, defined in `sharing_model.md`.
 5. **Linking nodes to real users requires consent.** A node's `subject_ref` triggers a consent request; the link is `pending` until accepted, and the named user can withdraw at any time (§4.1). Cross-graph navigation from such nodes is deferred (§10).
+
+**2026-08-14** — combining graphs (§9a):
+
+6. **"Show together" and "make into one" are separate features, not one with a flag.** Collections reference; merging copies. Conflating them would force one answer to "what happens when a member changes?" onto both.
+7. **Merging is non-destructive.** Sources are never modified or deleted. Most tools consume their inputs when merging; this one doesn't, so the operation is always undoable by deleting the result.
+8. **Combining never rescales coordinates.** Divergent axis ranges union; a point keeps the number it was recorded with. Rescaling would silently restate what a user said about themselves.
+9. **Combining takes the most restrictive consent state**, and any `denied` wins outright. Merging must not be a laundering path for a `subject_ref` link that was never confirmed.
+10. **Collections are not shareable in v1.** Sharing a view over graphs you don't own is a consent question `sharing_model.md` §12 doesn't yet answer.
+11. **Neither feature bumps `SCHEMA_VERSION`.** A merged graph is an ordinary v1 Graph, and `GraphCollection` is additive — no existing shape changed, so no old client is put at risk of misrendering (§8).

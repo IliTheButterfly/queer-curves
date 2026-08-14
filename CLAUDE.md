@@ -61,6 +61,17 @@ This whole-snapshot design intentionally trades the event-stream/history granula
 
 Read-only mode for non-owners comes from `isOwnGraph()` (room creator vs. current user).
 
+### Combining graphs
+
+`store/compose.ts` is the one place several graphs become one, and both features that do it share it (`data_model.md` §9a):
+
+- **Merge** (`store/merge.ts`, `/graphs/merge`) composes and _saves_ the result as a new, ordinary graph. Non-destructive — sources are never touched, so the undo is deleting the result.
+- **Collections** (`store/collections.ts`, `/collections`) save a list of graph ids and compose them _live_ on every open, then hand the throwaway result to the normal `SpectrumHistoryChart`/`NetworkChart`. Nothing composed is persisted.
+
+`composeGraphs` is pure — id and timestamp are parameters, not `Date.now()` — so it is directly testable. Call `checkComposable` first and surface every issue it returns; the errors block composition and the warnings (axis mismatch, foreign ownership) are what makes the operation honest rather than quietly lossy. Two rules there are load-bearing rather than cosmetic: axis ranges union instead of rescaling coordinates, and network `link_status` takes the _most restrictive_ value so a merge can't manufacture consent.
+
+`collections.ts` mirrors `graphs.ts` exactly (per-id dispatch, `ensureHydrated()` first, `c_…` migrates to a room on next save), and `collections-matrix.ts` mirrors `graphs-matrix.ts` with its own `app.queercurves.collection.*` event types — distinct types are what keep collections out of `listMatrixGraphs()` and vice versa. Collection rooms deliberately have **no `m.room.name`** (THREATS.md §7 rule 3).
+
 ### Domain model
 
 `src/lib/types.ts` is the code-side mirror of `data_model.md` §1–§9. `Graph` is a discriminated union on `type`: `SpectrumGraph` (N-D axes, regions, waypoints, timestamped datapoints, saved `SpectrumView`s that reproject the same points cartesian/radial/polar) and `NetworkGraph` (nodes, typed edges, `subject_ref` links that require a consent handshake). Any schema change must bump `SCHEMA_VERSION` and update `data_model.md` §8 — `store/io.ts` refuses to import graphs from a future version, which is the fail-safe old clients rely on.

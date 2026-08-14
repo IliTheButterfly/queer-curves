@@ -250,6 +250,50 @@ export interface NetworkGraph extends BaseGraph {
 
 export type Graph = SpectrumGraph | NetworkGraph;
 
+// ─── Collections (multi-graph views) ────────────────────────────────────────
+
+// A collection names several graphs that should be looked at together — your
+// gender graph next to your partner's, or three years kept as separate
+// graphs. It stores *references*, never a copy: opening a collection composes
+// its members on the fly (store/compose.ts) and renders the result through
+// the ordinary chart. Members stay independently editable, independently
+// shared, and independently revocable; deleting a collection deletes nothing
+// but the list itself.
+//
+// This is the saved counterpart to merging. Merge answers "make these one
+// graph from now on"; a collection answers "show these together, but keep
+// them separate". See data_model.md §9a.
+export interface CollectionMember {
+	graph_id: string;
+	// Series colour in the combined view — this is what the legend keys off.
+	// Assigned from the collection owner's palette when the member is added.
+	color?: string;
+	// Display-name override, so a collection can say "me" and "Sam" instead
+	// of repeating each graph's own title.
+	label?: string;
+}
+
+export interface GraphCollection {
+	id: string;
+	// Discriminates a collection from a Graph in mixed storage and in the
+	// Matrix snapshot payload.
+	kind: 'collection';
+	name: string;
+	description?: string;
+	created_at: Timestamp;
+	modified_at: Timestamp;
+	schema_version: number;
+	owner: UserRef;
+	members: CollectionMember[];
+	// Saved projection applied to the composed graph. Spectrum only — the
+	// network renderer has no view concept in v1.
+	view?: SpectrumView;
+}
+
+export function isCollection(value: { kind?: string }): value is GraphCollection {
+	return value.kind === 'collection';
+}
+
 // ─── Type guards ────────────────────────────────────────────────────────────
 
 export function isSpectrum(graph: Graph): graph is SpectrumGraph {

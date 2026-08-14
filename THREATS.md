@@ -341,4 +341,29 @@ When closing a feature decision, append the outcome to a "feature-vs-threats" lo
 
 ## 10. Decisions log
 
-(Empty — this is v0. Future decisions affecting the threat model should be appended here with date and rationale.)
+(This is v0. Future decisions affecting the threat model should be appended here with date and rationale.)
+
+### 2026-08-14 — merging graphs and collections (multi-graph views)
+
+Feature: `data_model.md` §9a. Merge combines N graphs into one new graph; a collection saves a list of graph ids and renders them on one chart without copying anything.
+
+**Threats touched.**
+
+- **T6 (non-consensual naming via `subject_ref`)** — the sharp edge. Merging two network graphs could otherwise upgrade a `pending` or absent consent state into `confirmed` just by unifying two nodes for the same person. Mitigated: consent states combine to the *most restrictive* value, and any `denied` wins outright (§7 rule 1). A merge can only ever narrow a link, never widen one.
+- **T4 (pattern inference by long-term viewers)** and **T5 (identity-history exposure)** — a merged graph concentrates data that was previously spread across several graphs with several separate share lists. One later share decision now exposes everything the merge pulled in. Mitigated by disclosure rather than prohibition: merging graphs owned by someone else raises an explicit, uncollapsed warning that the result is owned by *you* and re-sharing it re-shares their data under your name.
+- **T15 (UX-induced unintended sharing or wrong revocation)** — "merge" conventionally consumes its inputs. If users assumed that here, they'd expect the sources' share lists to be gone. Mitigated: the operation is non-destructive and both the merge page and the collection page say so in plain language.
+- **T7 (homeserver social-graph reconstruction)** — collections add one room per collection, and its membership is the owner alone. Marginal: the homeserver learns that an account has N+1 private rooms rather than N. No new correlation between *accounts* is created, because collections are not shareable.
+- **T1 (coerced disclosure)** and **T16 (future-self regret)** — unchanged in kind. A collection is one more artifact that can be opened under duress, but it holds no data of its own; deleting it destroys nothing.
+
+**Adversary capability.** No adversary gains a new capability. A homeserver operator sees additional room-creation events with an opaque `app.queercurves.collection.*` type and no readable content. Nothing new is published to anyone who wasn't already a member of the underlying graph rooms — neither feature invites, shares, or transmits to any new party.
+
+**Against §7 design rules.**
+
+- Rule 1 (least sharing): honoured. Collections are personal, non-shareable in v1; merging shares nothing by itself; cross-owner composition warns.
+- Rule 3 (no plaintext labels): honoured, and slightly *improved* on the existing baseline — collection rooms are created with no `m.room.name`, so the name lives only in the encrypted snapshot. Graph rooms still set a plaintext name; that is pre-existing and tracked in §9, not something this feature widens.
+- Rule 4 (distinct revocation verbs): honoured. Deleting a collection is explicitly labelled as removing only the list; deleting a merged graph is an ordinary graph deletion and does not touch the sources.
+- Rule 10 (encrypt at rest): honoured on the Matrix path. Collections written by a logged-out session land in plain `localStorage`, exactly like graphs do today, and migrate into an encrypted room on the next save once crypto is ready. Same known gap as graphs, no wider (`STACK.md` §6).
+- Rule 12 (schema versioning): honoured. Neither feature changes an existing shape, so `SCHEMA_VERSION` stays put; a client that doesn't know `app.queercurves.collection.*` simply doesn't see collections, which is the correct fail-safe.
+- Rule 13 (honest disclosure): honoured. Compatibility problems, foreign ownership, and unloadable members are all shown in full and never collapsed behind a details toggle.
+
+**Residual risk, in user terms.** Merging someone else's graph into yours makes a copy that they cannot revoke. If they later withdraw the original from you, your merged copy still has their data in it, and the warning at merge time is the only thing standing between that and an accidental re-share. This is the same honest-physics limit as T2 — once data has been decrypted on your device, it is out of the sender's control — and merging simply makes it easy to act on. No new §6 entry is required: this is T2 as already documented, not a new class of thing we decline to defend against.
