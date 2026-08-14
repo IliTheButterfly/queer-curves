@@ -63,13 +63,21 @@ Read-only mode for non-owners comes from `isOwnGraph()` (room creator vs. curren
 
 ### Domain model
 
-`src/lib/types.ts` is the code-side mirror of `data_model.md` §1–§9. `Graph` is a discriminated union on `type`: `SpectrumGraph` (N-D axes, regions, waypoints, timestamped datapoints, saved `SpectrumView`s that reproject the same points cartesian/radial/polar) and `NetworkGraph` (nodes, typed edges, `subject_ref` links that require a consent handshake). Any schema change must bump `SCHEMA_VERSION` and update `data_model.md` §8 — `store/io.ts` refuses to import graphs from a future version, which is the fail-safe old clients rely on.
+`src/lib/types.ts` is the code-side mirror of `data_model.md` §1–§10. `Graph` is a discriminated union on `type`, with three families:
 
-`src/lib/fixtures.ts` holds the canonical test cases from `data_model.md` §11 (aceflux, genderfluid, polycule, polycule-redacted); they are bundled and read-only.
+- `SpectrumGraph` — N-D axes, regions, waypoints, timestamped datapoints, saved `SpectrumView`s that reproject the same points cartesian/radial/polar.
+- `NetworkGraph` — nodes, typed edges, `subject_ref` links that require a consent handshake.
+- `PronounsGraph` — a pronoun/gender card (`data_model.md` §5): `pronouns` sets and `terms` words, each referencing a per-graph `schema.levels` preference scale by id. Entries whose `level_id`/`group_id` no longer resolve must stay visible under "unsorted"/"ungrouped" rather than vanish — the scale is editable after entries exist. Example sentences are generated in `graphs/pronouns/sentences.ts`, which **skips any template needing a form the user didn't supply** instead of inferring one; inventing "her's" is the same class of bug as misgendering.
+
+Any schema change must bump `SCHEMA_VERSION` and update `data_model.md` §9 — `store/io.ts` refuses to import graphs from a future version, which is the fail-safe old clients rely on. A new graph _family_ bumps it too (v2 = pronoun cards), even though existing families gain no fields.
+
+Adding a graph family means touching every type-dispatching site: `store/io.ts` validation, `ui/GraphConfigForm.svelte` (create/edit), `routes/graphs/[id]/+page.svelte` (render + editors), `ui/GraphStats.svelte`, `routes/+page.svelte` (`summarize`), and `routes/palettes/[id]/+page.svelte` (per-palette preview). The storage layer (`store/graphs.ts`, `graphs-matrix.ts`) is type-agnostic and needs nothing.
+
+`src/lib/fixtures.ts` holds the canonical test cases from `data_model.md` §12 (aceflux, genderfluid, polycule, polycule-redacted, pronoun-card); they are bundled and read-only.
 
 ### Rendering
 
-`graphs/spectrum/SpectrumHistoryChart.svelte` (d3) and `graphs/network/NetworkChart.svelte` (cytoscape + fcose, lazy-loaded). `presets/palettes.ts` holds queer-flag palettes; a graph's `customization.theme.palette` drives element colors, and elements can reference entries as `@palette[i]`. App chrome is purple/lavender CSS custom properties in `src/app.css` (`--color-bg: #1a1424`, `--color-accent: #c98aff`).
+`graphs/spectrum/SpectrumHistoryChart.svelte` (d3), `graphs/network/NetworkChart.svelte` (cytoscape + fcose, lazy-loaded), and `graphs/pronouns/PronounCard.svelte` (plain DOM — no chart library; keeps the card selectable and screen-reader friendly). `presets/palettes.ts` holds queer-flag palettes; a graph's `customization.theme.palette` drives element colors, and elements can reference entries as `@palette[i]`. App chrome is purple/lavender CSS custom properties in `src/app.css` (`--color-bg: #1a1424`, `--color-accent: #c98aff`).
 
 ## Working in this repo
 

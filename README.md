@@ -96,10 +96,11 @@ src/
 ├── lib/
 │   ├── graphs/spectrum/        # SpectrumHistoryChart + view presets
 │   ├── graphs/network/         # NetworkChart (cytoscape, lazy-loaded)
+│   ├── graphs/pronouns/        # PronounCard + example-sentence rendering
 │   ├── presets/palettes.ts     # 18 queer-flag colour palettes
 │   ├── store/                  # localStorage + JSON import/export
 │   ├── ui/                     # forms, pickers, lists
-│   ├── fixtures.ts             # canonical test cases from data_model.md §11
+│   ├── fixtures.ts             # canonical test cases from data_model.md §12
 │   └── types.ts                # domain types
 ├── routes/
 │   ├── +page.svelte            # landing — your graphs, fixtures, palettes

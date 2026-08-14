@@ -52,7 +52,7 @@ function validate(value: unknown): asserts value is Graph {
 
 	if (typeof obj.id !== 'string') throw new GraphImportError('Missing or invalid `id`.');
 	if (typeof obj.name !== 'string') throw new GraphImportError('Missing or invalid `name`.');
-	if (obj.type !== 'spectrum' && obj.type !== 'network') {
+	if (obj.type !== 'spectrum' && obj.type !== 'network' && obj.type !== 'pronouns') {
 		throw new GraphImportError(`Invalid \`type\`: ${JSON.stringify(obj.type)}.`);
 	}
 
@@ -80,13 +80,24 @@ function validate(value: unknown): asserts value is Graph {
 		if (!Array.isArray(obj.datapoints)) {
 			throw new GraphImportError('Spectrum graph missing `datapoints`.');
 		}
-	} else {
+	} else if (obj.type === 'network') {
 		const schema = obj.schema as Record<string, unknown>;
 		if (!Array.isArray(schema.edge_types)) {
 			throw new GraphImportError('Network graph missing `schema.edge_types`.');
 		}
 		if (!Array.isArray(obj.nodes) || !Array.isArray(obj.edges)) {
 			throw new GraphImportError('Network graph missing `nodes` or `edges`.');
+		}
+	} else {
+		const schema = obj.schema as Record<string, unknown>;
+		if (!Array.isArray(schema.levels) || schema.levels.length === 0) {
+			throw new GraphImportError('Pronoun graph missing a non-empty `schema.levels` scale.');
+		}
+		if (!Array.isArray(schema.term_groups)) {
+			throw new GraphImportError('Pronoun graph missing `schema.term_groups`.');
+		}
+		if (!Array.isArray(obj.pronouns) || !Array.isArray(obj.terms)) {
+			throw new GraphImportError('Pronoun graph missing `pronouns` or `terms`.');
 		}
 	}
 

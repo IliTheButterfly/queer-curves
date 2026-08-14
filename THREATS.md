@@ -126,8 +126,8 @@ Each threat is keyed for cross-reference. Format: short description, primary adv
 
 **Mitigations:**
 - Default current-only — viewers don't see transition history unless explicitly granted it.
-- Hard graph deletion (`data_model.md` §7.3) wipes the data from the owner's storage and signals viewer caches to wipe too.
-- Datapoint redaction (`data_model.md` §3.4) for finer-grained correction without deletion.
+- Hard graph deletion (`data_model.md` §8.3) wipes the data from the owner's storage and signals viewer caches to wipe too.
+- Datapoint redaction (`data_model.md` §3.5) for finer-grained correction without deletion.
 
 **Residual risk:** Once any view of history has been granted, copies may persist on viewer devices indefinitely (see T2).
 
@@ -268,8 +268,8 @@ Each threat is keyed for cross-reference. Format: short description, primary adv
 **Primary adversary:** None (the user is both subject and adversary across time).
 
 **Mitigations:**
-- Datapoint deletion (Matrix redaction → cache wipe; `data_model.md` §3.4).
-- Hard graph deletion (`data_model.md` §7.3).
+- Datapoint deletion (Matrix redaction → cache wipe; `data_model.md` §3.5).
+- Hard graph deletion (`data_model.md` §8.3).
 - Easy bulk-deletion UX should be built (deferred — flag for v1.x).
 - Honest UX framing: data has half-life implications. Make this visible.
 
@@ -338,7 +338,49 @@ When closing a feature decision, append the outcome to a "feature-vs-threats" lo
 - **§T16 bulk-deletion UX**: needed for "future-self protection" — deferred to v1.x.
 - **§T8 jurisdictional guidance**: the docs and onboarding should include honest guidance for users in hostile jurisdictions. Drafting deferred but flagged.
 - **§T17 datapoint-timing flattening**: weekly batching of datapoint events as a future privacy mode. Not v1.
+- **Card-specific share disclosure**: the share dialog needs a pronoun-card line stating that the version a recipient sees is the version they keep, and that editing does not retract earlier snapshots. Until then §7 rule 13 is only partially met for cards — see §11.
 
 ## 10. Decisions log
 
 (Empty — this is v0. Future decisions affecting the threat model should be appended here with date and rationale.)
+
+## 11. Feature-vs-threats log
+
+The write-up §8 asks for, one entry per feature decision.
+
+### 2026-08-14 — Pronoun/gender cards (`data_model.md` §5)
+
+A third graph family: pronouns and gender/address/relationship words, each rated on a user-defined preference scale. Shared through the existing one-room-per-graph mechanism; no new protocol surface, no new event types, no new sharing verb.
+
+**Threats touched.**
+
+- **T1 (coerced disclosure).** A card is the single most quotable artifact in the app — "you told your friends you use they/them" is legible to anyone, with no chart to interpret. Under coercion it is more damaging than a spectrum graph, because it needs no explanation to be used against its author.
+- **T2 (time-shifted misuse by past recipients).** Cards change as people do. A recipient retains the version they were given; a two-year-old card presented as current is a straightforward misgendering tool.
+- **T3 (receipts / screenshots).** Precisely the artifact people screenshot, and the one designed to be shown to others. Unavoidable and partly the point.
+- **T5 (identity-history exposure).** A card in a room with history granted exposes the *trajectory* of someone's language about themselves — "she/her favourite" a year ago, "never" today. That sequence is more sensitive than either endpoint.
+- **T15 (UX-induced unintended sharing).** The card is the graph type users will most want to share widely, so it is the type most exposed to a mis-scoped grant.
+- **T16 (future-self regret).** Same mechanism as T5, from the author's side.
+
+**Adversaries.** No adversary gains a *new capability* — the encoding, room layout, and grant model are unchanged, so A4/A5 (homeservers) see exactly the metadata they already saw and no plaintext. What changes is **payload value** for A1 (ex-recipient turned hostile), A2 (community peer receiving a screenshot), and A3 (coercive actor): the decrypted content is now short, quotable, and self-explanatory. A6/A7/A8–A11 are unaffected.
+
+**§7 design rules.** No violations.
+
+| Rule | Status |
+|---|---|
+| 1. Default to least sharing | Held. A new card is owner-only, like any graph. `display_name` is optional and empty by default, so a card carries no name unless the author adds one. |
+| 3. No labels in plaintext state | Held. Pronouns and words live in encrypted timeline events; nothing goes into `m.room.name`/topic. This matters more here than elsewhere — "she/her" in a room name would be an outing primitive. |
+| 4. Distinct revocation verbs | Held. Unchanged; cards use the existing soft/hard/deletion verbs. |
+| 5. Ephemerality is UX, not a guarantee | Held, and stated in-model: `data_model.md` §5.6 records that editing a card does not retract snapshots already delivered. |
+| 10. Encrypt at rest | Held. Same storage path as every other graph, including the same known localStorage-token gap (`STACK.md` §6). |
+| 12. Schema versioning | Held. New family ⇒ `schema_version = 2`; a v1 client fails safe with "newer format" rather than rendering an unknown `type`. |
+| 13. Honest disclosure | Partially deferred — see residual risk. |
+
+**Residual risk, in plain language.**
+
+- **A card you share is a card you've given away.** Anyone you show it to keeps the version they saw. If your pronouns change, their copy doesn't, and you cannot make them update it.
+- **Editing is not retraction.** Changing "she/her" from *okay* to *never* publishes a new version; the old one stays in the room's encrypted history for anyone who was already there. If a past preference is something you need no record of, don't record it here.
+- **A card is easy to screenshot and easy to quote.** That's what makes it useful and what makes it a receipt. Nothing in the software changes that.
+
+**No new §6 entries.** Every residual item above is an instance of a non-defense already listed there (decrypted-data retention, screenshots, coerced cooperation).
+
+**Follow-up (not v1, tracked in §9):** the share dialog should carry a card-specific honest-disclosure line covering the two points above — rule 13 is only partially met until it does. The generic share-dialog copy does not currently say "the version they see is the version they keep."

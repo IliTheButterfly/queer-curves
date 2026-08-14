@@ -1,19 +1,23 @@
 // Domain types for queer-curves graphs.
 //
-// Mirrors the spec in data_model.md §1–§9. Schema changes here MUST bump
-// SCHEMA_VERSION (and update data_model.md §8) so older clients fail safe
+// Mirrors the spec in data_model.md §1–§10. Schema changes here MUST bump
+// SCHEMA_VERSION (and update data_model.md §9) so older clients fail safe
 // rather than misrender unfamiliar shapes.
 
-export const SCHEMA_VERSION = 1;
+// v2 adds the `pronouns` graph family (data_model.md §5). Graphs of the
+// older families are shape-identical to v1, but the version gate is
+// deliberately conservative: a v1 client must refuse a v2 export rather
+// than guess at a `type` it has never heard of.
+export const SCHEMA_VERSION = 2;
 
 // A Matrix user reference, in canonical "@user:server" form.
 export type UserRef = string;
 
 // ISO 8601 UTC timestamp string. All timestamps are stored in UTC; clients
-// render in local zone (data_model.md §3.4).
+// render in local zone (data_model.md §3.5).
 export type Timestamp = string;
 
-export type GraphType = 'spectrum' | 'network';
+export type GraphType = 'spectrum' | 'network' | 'pronouns';
 
 // ─── Customization ──────────────────────────────────────────────────────────
 
@@ -161,7 +165,7 @@ export interface Axis {
 	zero_label?: string;
 }
 
-// A region's geometric shape. 3D regions deferred (data_model.md §10).
+// A region's geometric shape. 3D regions deferred (data_model.md §11).
 export type RegionShape =
 	| { type: 'range'; min: number; max: number }
 	| { type: 'box'; min: number[]; max: number[] }
@@ -246,9 +250,104 @@ export interface NetworkGraph extends BaseGraph {
 	edges: NetworkEdge[];
 }
 
+// ─── Pronoun graphs ─────────────────────────────────────────────────────────
+
+export interface PronounsCustomization extends BaseCustomization {
+	// 'level' (default) groups entries under their preference level; 'flat'
+	// lists them in authored order with the level shown as a chip.
+	layout?: 'level' | 'flat';
+	// Whether to render generated example sentences under each pronoun set
+	// that declares its forms. Defaults to true.
+	show_examples?: boolean;
+}
+
+// One step on the graph's preference scale. The scale is per-graph so a card
+// can be as coarse as yes/no or as fine as the six-step scale pronoun cards
+// conventionally use. Array order is the scale: most-preferred first.
+export interface PreferenceLevel {
+	id: string;
+	// e.g. "favourite", "okay", "only if we're close", "avoid", "never".
+	label: string;
+	color: string;
+	description?: string;
+}
+
+// The five English pronoun forms, plus verb agreement. Only subject and
+// object are required — a partially-filled set still renders as a chip, it
+// just can't produce every example sentence (see graphs/pronouns/sentences).
+export interface PronounForms {
+	// she / he / they / ey
+	subject: string;
+	// her / him / them / em
+	object: string;
+	// her (book) / his / their / eir
+	possessive_determiner?: string;
+	// hers / his / theirs / eirs
+	possessive_pronoun?: string;
+	// herself / himself / themself / emself
+	reflexive?: string;
+	// True when the subject form takes plural verb agreement ("they are"
+	// rather than "she is"). Defaults to false.
+	plural?: boolean;
+}
+
+export interface PronounSet {
+	id: string;
+	// Display form, e.g. "she/her". Free text rather than derived from
+	// `forms`, because real cards carry entries with no declension at all —
+	// "any pronouns", "name only", "ask me first".
+	label: string;
+	// Optional: set only for entries that actually decline.
+	forms?: PronounForms;
+	level_id: string;
+	notes?: string;
+	// Optional per-entry colour override. When unset the entry renders in
+	// its level's colour.
+	color?: string;
+}
+
+// A grouping for terms — "identity words", "ways to address me",
+// "relationship words". Per-graph so users name their own categories.
+export interface TermGroup {
+	id: string;
+	label: string;
+	description?: string;
+}
+
+// A gender/identity word or form of address, rated on the same preference
+// scale as the pronoun sets (e.g. "nonbinary" favourite, "lady" avoid).
+export interface GenderTerm {
+	id: string;
+	label: string;
+	group_id: string;
+	level_id: string;
+	notes?: string;
+	color?: string;
+}
+
+export interface PronounsSchema {
+	levels: PreferenceLevel[];
+	term_groups: TermGroup[];
+	// Sentence templates used to demonstrate each pronoun set's forms.
+	// Placeholders are documented in graphs/pronouns/sentences.ts. When
+	// unset, clients use their built-in defaults.
+	examples?: string[];
+}
+
+export interface PronounsGraph extends BaseGraph {
+	type: 'pronouns';
+	schema: PronounsSchema;
+	customization: PronounsCustomization;
+	pronouns: PronounSet[];
+	terms: GenderTerm[];
+	// Optional name to substitute into example sentences ("Ada brought their
+	// own lunch"). Separate from `name`, which titles the graph.
+	display_name?: string;
+}
+
 // ─── Discriminated union ────────────────────────────────────────────────────
 
-export type Graph = SpectrumGraph | NetworkGraph;
+export type Graph = SpectrumGraph | NetworkGraph | PronounsGraph;
 
 // ─── Type guards ────────────────────────────────────────────────────────────
 
@@ -258,4 +357,8 @@ export function isSpectrum(graph: Graph): graph is SpectrumGraph {
 
 export function isNetwork(graph: Graph): graph is NetworkGraph {
 	return graph.type === 'network';
+}
+
+export function isPronouns(graph: Graph): graph is PronounsGraph {
+	return graph.type === 'pronouns';
 }
