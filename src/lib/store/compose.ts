@@ -75,8 +75,26 @@ export interface ComposeOptions {
 
 export type IssueLevel = 'error' | 'warning';
 
+/**
+ * Machine-readable reason, so callers can react to a specific problem
+ * without matching on prose. Collections use this to downgrade
+ * `dimension-mismatch` from an error to a warning: members with different
+ * axis counts can't share the *combined* mode, but they plot fine in the
+ * custom-axes mode, which reads named axes (crossplot.ts).
+ */
+export type IssueCode =
+	| 'empty'
+	| 'type-mismatch'
+	| 'dimension-mismatch'
+	| 'axis-name-mismatch'
+	| 'axis-pole-mismatch'
+	| 'axis-range-mismatch'
+	| 'foreign-owner'
+	| 'edge-type-conflict';
+
 export interface ComposeIssue {
 	level: IssueLevel;
+	code: IssueCode;
 	message: string;
 }
 
@@ -94,7 +112,7 @@ export interface ComposeIssue {
 export function checkComposable(sources: ComposeSource[], viewer?: UserRef): ComposeIssue[] {
 	const issues: ComposeIssue[] = [];
 	if (sources.length === 0) {
-		issues.push({ level: 'error', message: 'Pick at least one graph.' });
+		issues.push({ level: 'error', code: 'empty', message: 'Pick at least one graph.' });
 		return issues;
 	}
 
@@ -102,6 +120,7 @@ export function checkComposable(sources: ComposeSource[], viewer?: UserRef): Com
 	if (types.size > 1) {
 		issues.push({
 			level: 'error',
+			code: 'type-mismatch',
 			message: `Can't combine a spectrum graph with a network graph — they have nothing in common to plot. Selected: ${[...types].join(', ')}.`
 		});
 		return issues;
@@ -117,6 +136,7 @@ export function checkComposable(sources: ComposeSource[], viewer?: UserRef): Com
 			const names = foreign.map((s) => `"${s.graph.name}"`).join(', ');
 			issues.push({
 				level: 'warning',
+				code: 'foreign-owner',
 				message: `${names} ${foreign.length === 1 ? 'belongs' : 'belong'} to someone else. The result is a new graph owned by you — if you later share it, you are re-sharing their data under your own name. Only do this with their agreement.`
 			});
 		}
@@ -128,6 +148,7 @@ export function checkComposable(sources: ComposeSource[], viewer?: UserRef): Com
 		if (dims.size > 1) {
 			issues.push({
 				level: 'error',
+				code: 'dimension-mismatch',
 				message: `These graphs have different numbers of axes (${[...dims].sort().join(', ')}). Their coordinates aren't comparable, so they can't share a plot.`
 			});
 			return issues;
@@ -140,18 +161,21 @@ export function checkComposable(sources: ComposeSource[], viewer?: UserRef): Com
 				if (other.name !== axis.name) {
 					issues.push({
 						level: 'warning',
+						code: 'axis-name-mismatch',
 						message: `Axis ${i + 1} is called "${axis.name}" in "${base.name}" but "${other.name}" in "${g.name}". Points are combined by position, so this only makes sense if the axes mean the same thing.`
 					});
 				}
 				if (other.min_label !== axis.min_label || other.max_label !== axis.max_label) {
 					issues.push({
 						level: 'warning',
+						code: 'axis-pole-mismatch',
 						message: `Axis ${i + 1} poles differ: "${axis.min_label}↔${axis.max_label}" in "${base.name}" vs "${other.min_label}↔${other.max_label}" in "${g.name}".`
 					});
 				}
 				if (other.range[0] !== axis.range[0] || other.range[1] !== axis.range[1]) {
 					issues.push({
 						level: 'warning',
+						code: 'axis-range-mismatch',
 						message: `Axis ${i + 1} ranges differ ([${axis.range.join(', ')}] vs [${other.range.join(', ')}]). The combined axis widens to cover both, so positions keep their raw values and are not rescaled.`
 					});
 				}
@@ -170,6 +194,7 @@ export function checkComposable(sources: ComposeSource[], viewer?: UserRef): Com
 			if (prev && prev.label !== t.label) {
 				issues.push({
 					level: 'warning',
+					code: 'edge-type-conflict',
 					message: `Edge type "${t.id}" means "${prev.label}" in "${prev.from}" but "${t.label}" in "${g.name}". The first definition wins; edges from the other graph will be relabelled.`
 				});
 			} else if (!prev) {

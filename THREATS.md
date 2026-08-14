@@ -367,3 +367,23 @@ Feature: `data_model.md` §9a. Merge combines N graphs into one new graph; a col
 - Rule 13 (honest disclosure): honoured. Compatibility problems, foreign ownership, and unloadable members are all shown in full and never collapsed behind a details toggle.
 
 **Residual risk, in user terms.** Merging someone else's graph into yours makes a copy that they cannot revoke. If they later withdraw the original from you, your merged copy still has their data in it, and the warning at merge time is the only thing standing between that and an accidental re-share. This is the same honest-physics limit as T2 — once data has been decrypted on your device, it is out of the sender's control — and merging simply makes it easy to act on. No new §6 entry is required: this is T2 as already documented, not a new class of thing we decline to defend against.
+
+### 2026-08-14 — cross-graph axis plotting
+
+Feature: `data_model.md` §9a.3. A collection view can bind each visual channel to one specific `(member, axis)` pair, so any axis of any member plots against any other — including one person's axis against another's, paired over time.
+
+**Threats touched.**
+
+- **T4 (pattern inference by long-term viewers)** — this is the one the feature genuinely sharpens. Correlating two graphs is *precisely* an inference tool: "your libido tracks your stress", "your mood follows your partner's". Someone with read access to two of your graphs could already have eyeballed this; the feature makes it one dropdown. Two things bound it. First, it reads only graphs already in the viewer's collection, so it grants **no new access** — it surfaces inferences from data the viewer could already see. Second, collections are personal and non-shareable, so a correlation cannot be published as an artifact in its own right. The honest position is that this lowers the effort of an inference that was always available, and that is a real change even though the access boundary is unmoved.
+- **T5 (identity-history exposure)** — unchanged in reach. No new data is read, transmitted, or stored; the plot is composed in memory on each open and thrown away.
+- **T15 (UX-induced misreading)** — new, and specific to the time join. Pairing two independently-recorded graphs by carrying the last value forward produces a chart that *looks* like simultaneous measurement. Presented uncaveated it would invite conclusions the data doesn't support. Mitigated by a permanent note above the chart whenever the join is in play, saying in plain words that each point pairs a reading with the other graph's most recent value and that this is an approximation.
+
+**Adversary capability.** None gains anything. No new events, no new rooms, no new network traffic — a `CollectionView` is a few integers inside the collection snapshot that was already encrypted. An adversary who can read the collection could already read the member graphs it names.
+
+**Against §7 design rules.**
+
+- Rule 1 (least sharing): honoured — nothing is shared; the mode reads graphs the viewer already has.
+- Rule 12 (schema versioning): honoured — `CollectionView` is additive and optional; a client that doesn't understand it falls back to the combined mode.
+- Rule 13 (honest disclosure): this is the rule doing the work. The join caveat is not collapsible and not a tooltip, and the mode's own description says what it does before the user builds anything. The feature also *reads* values only — no rescaling or derived coordinates — so a plot never restates what the user recorded.
+
+**Residual risk, in user terms.** Putting someone else's graph in a collection alongside yours makes correlations between your lives easy to produce and easy to screenshot. That is the point of the feature and also its hazard: a chart claiming "their mood drives mine" is persuasive, shareable as an image, and built on a carry-forward approximation rather than paired measurements. The caveat text is the only thing travelling with the chart, and it does not survive a screenshot — the same limitation as T3, and no new §6 entry is needed for it.

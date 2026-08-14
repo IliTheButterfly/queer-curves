@@ -2,8 +2,13 @@
 	import { goto } from '$app/navigation';
 	import { fixtures, type Graph } from '$lib';
 	import { listUserGraphs } from '$lib/store/graphs.js';
-	import { checkComposable, type ComposeSource } from '$lib/store/compose.js';
-	import { newCollection, saveCollection, seriesColor } from '$lib/store/collections.js';
+	import type { ComposeSource } from '$lib/store/compose.js';
+	import {
+		checkCollectionMembers,
+		newCollection,
+		saveCollection,
+		seriesColor
+	} from '$lib/store/collections.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
 	import GraphMultiSelect from '$lib/ui/GraphMultiSelect.svelte';
 	import ComposeIssues from '$lib/ui/ComposeIssues.svelte';
@@ -23,7 +28,10 @@
 			.map((graph) => ({ graph }))
 	);
 	const viewer = $derived(matrixStore.session?.userId ?? undefined);
-	const issues = $derived(sources.length > 0 ? checkComposable(sources, viewer) : []);
+	// Collections tolerate more than merges do: members with different axis
+	// counts are fine, because the custom-axes view plots named axes rather
+	// than shared ones.
+	const issues = $derived(sources.length > 0 ? checkCollectionMembers(sources, viewer) : []);
 	const blocked = $derived(issues.some((i) => i.level === 'error'));
 	const canSave = $derived(name.trim().length > 0 && selected.length > 0 && !blocked);
 
@@ -43,7 +51,7 @@
 
 	function disabledReason(g: Graph): string | null {
 		if (sources.length === 0) return null;
-		const err = checkComposable([...sources, { graph: g }], viewer).find(
+		const err = checkCollectionMembers([...sources, { graph: g }], viewer).find(
 			(i) => i.level === 'error'
 		);
 		return err ? err.message : null;

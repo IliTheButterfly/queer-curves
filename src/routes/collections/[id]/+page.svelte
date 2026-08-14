@@ -11,6 +11,7 @@
 	import { activeViews } from '$lib/graphs/spectrum/views.js';
 	import ComposeIssues from '$lib/ui/ComposeIssues.svelte';
 	import {
+		composeAxisView,
 		composeCollection,
 		deleteCollection,
 		getCollection,
@@ -19,8 +20,9 @@
 		seriesColor,
 		type ResolvedCollection
 	} from '$lib/store/collections.js';
+	import { axisOptions, defaultCollectionView } from '$lib/store/crossplot.js';
 	import { matrixStore } from '$lib/matrix/store.svelte.js';
-	import type { GraphCollection } from '$lib/types.js';
+	import type { CollectionSeries, CollectionView, GraphCollection } from '$lib/types.js';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -41,6 +43,77 @@
 			spectrumViews.find((v) => v.id === collection?.view?.id) ??
 			spectrumViews[0]
 	);
+
+	// ── Custom axes mode ────────────────────────────────────────────────
+	// Combined mode lays every member onto shared axes, which only works
+	// when they agree about what axis 0 means. Custom axes instead binds
+	// each visual channel to one (member, axis) pair, so you can plot your
+	// stress against someone else's, or one axis against another.
+	type Mode = 'combined' | 'axes';
+	let mode = $state<Mode>('combined');
+	const options = $derived(axisOptions(resolved?.sources ?? []));
+	// Combined mode is unavailable when members disagree about
+	// dimensionality — that's exactly the case custom axes exists for.
+	const combinedAvailable = $derived(composed !== null);
+
+	let axisView = $state<CollectionView | null>(null);
+	const effectiveAxisView = $derived(
+		axisView ?? collection?.axis_view ?? defaultCollectionView(resolved?.sources ?? [])
+	);
+	const axisPlot = $derived(
+		resolved && effectiveAxisView ? composeAxisView(resolved, effectiveAxisView) : null
+	);
+	// The custom-axes plot is always a plain 2-axis cartesian read; when the
+	// x channel is time the renderer takes it from the timestamps.
+	const axisPlotView = $derived(
+		effectiveAxisView
+			? {
+					id: 'axis-plot',
+					name: effectiveAxisView.name,
+					layout: 'cartesian' as const,
+					x: (effectiveAxisView.x === 'time' ? 'time' : 0) as 'time' | 0,
+					y: 1 as const
+				}
+			: undefined
+	);
+
+	function optionKey(ref: CollectionSeries): string {
+		return `${ref.member}:${ref.axis}`;
+	}
+
+	function parseKey(key: string): CollectionSeries {
+		const [member, axis] = key.split(':').map(Number);
+		return { member, axis };
+	}
+
+	function setX(key: string) {
+		const base = effectiveAxisView ?? { id: 'axis-view', name: 'Custom', x: 'time', y: [] };
+		axisView = { ...base, x: key === 'time' ? 'time' : parseKey(key) };
+	}
+
+	function toggleY(key: string) {
+		const base = effectiveAxisView ?? { id: 'axis-view', name: 'Custom', x: 'time', y: [] };
+		const ref = parseKey(key);
+		const present = base.y.some((r) => optionKey(r) === key);
+		const y = present ? base.y.filter((r) => optionKey(r) !== key) : [...base.y, ref];
+		// Unchecking the last series is allowed, and the page then asks for a
+		// selection. Refusing the toggle instead would leave the checkbox
+		// showing unchecked while the state still held it — Svelte only
+		// re-applies `checked` when the bound expression changes, so a
+		// rejected toggle desyncs the control from the plot.
+		axisView = { ...base, y };
+	}
+
+	$effect(() => {
+		// When the members can't share one axis system, combined mode has
+		// nothing to draw — land the user on the mode that does.
+		if (!combinedAvailable && options.length > 0) mode = 'axes';
+	});
+
+	async function saveAxisView() {
+		if (!collection || !effectiveAxisView) return;
+		await persist({ ...collection, axis_view: effectiveAxisView });
+	}
 
 	// The legend: one row per member that actually loaded, in member order,
 	// carrying the colour its points are drawn in.
@@ -147,7 +220,95 @@
 			<ComposeIssues issues={resolved.issues} />
 		{/if}
 
-		{#if composed}
+		{#if options.length > 0}
+			<div class="modes" role="group" aria-label="Chart mode">
+				<button
+					type="button"
+					class="mode"
+					class:active={mode === 'combined'}
+					disabled={!combinedAvailable}
+					onclick={() => (mode = 'combined')}
+				>
+					Combined
+				</button>
+				<button
+					type="button"
+					class="mode"
+					class:active={mode === 'axes'}
+					onclick={() => (mode = 'axes')}
+				>
+					Custom axes
+				</button>
+			</div>
+			<p class="muted modehint">
+				{#if mode === 'combined'}
+					Every member on the same axes, one colour each — for graphs that measure the same thing.
+				{:else}
+					Pick which axis of which graph goes on each side. Lets you plot one person's stress
+					against another's, or two axes of one graph against each other.
+				{/if}
+			</p>
+		{/if}
+
+		{#if mode === 'axes' && options.length > 0}
+			<div class="builder">
+				<div class="channel">
+					<span class="chlabel">Bottom</span>
+					<select
+						value={effectiveAxisView?.x === 'time'
+							? 'time'
+							: effectiveAxisView
+								? optionKey(effectiveAxisView.x)
+								: 'time'}
+						onchange={(e) => setX(e.currentTarget.value)}
+					>
+						<option value="time">Time</option>
+						{#each options as o (optionKey(o))}
+							<option value={optionKey(o)}>{o.label}</option>
+						{/each}
+					</select>
+				</div>
+				<div class="channel">
+					<span class="chlabel">Side</span>
+					<div class="ychecks">
+						{#each options as o (optionKey(o))}
+							<label class="ycheck">
+								<input
+									type="checkbox"
+									checked={effectiveAxisView?.y.some((r) => optionKey(r) === optionKey(o)) ?? false}
+									onchange={() => toggleY(optionKey(o))}
+								/>
+								{o.label}
+							</label>
+						{/each}
+					</div>
+				</div>
+			</div>
+			{#if effectiveAxisView && effectiveAxisView.x !== 'time'}
+				<p class="muted joinnote">
+					The two sides were recorded at different moments, so each point pairs a reading with the
+					other graph's most recent value at that time. That's an approximation, not a simultaneous
+					measurement.
+				</p>
+			{/if}
+			{#if effectiveAxisView && effectiveAxisView.y.length === 0}
+				<p class="warn">Pick at least one axis for the side of the chart.</p>
+			{:else if !axisPlot}
+				<p class="warn">
+					Nothing to plot — this view refers to an axis that no longer exists. Pick the channels
+					again.
+				</p>
+			{/if}
+		{/if}
+
+		{#if mode === 'axes' && axisPlot}
+			<div class="chart">
+				<SpectrumHistoryChart graph={axisPlot} view={axisPlotView} />
+			</div>
+			{#if effectiveAxisView?.id !== collection.axis_view?.id || axisView !== null}
+				<button type="button" class="linkish" onclick={saveAxisView}>remember this view</button>
+			{/if}
+		{:else if composed && mode === 'combined'}
 			{#if composed.type === 'spectrum' && spectrumViews.length > 1}
 				<div class="viewbar">
 					<label>
@@ -180,7 +341,11 @@
 					<NetworkChart graph={composed} />
 				{/if}
 			</div>
+		{:else if resolved && resolved.sources.length === 0}
+			<p class="muted">Nothing to plot — this collection has no members that could be loaded.</p>
+		{/if}
 
+		{#if legend.length > 0}
 			<h2>Legend</h2>
 			<ul class="legend">
 				{#each legend as entry (entry.id)}
@@ -194,8 +359,6 @@
 					</li>
 				{/each}
 			</ul>
-		{:else if resolved && resolved.sources.length === 0}
-			<p class="muted">Nothing to plot — this collection has no members that could be loaded.</p>
 		{/if}
 
 		<h2>Actions</h2>
@@ -257,6 +420,82 @@
 		color: rgba(255, 220, 170, 1);
 		border-radius: 4px;
 		font-size: 0.9em;
+	}
+	.modes {
+		display: inline-flex;
+		gap: 0;
+		margin-top: var(--space-4);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+	.mode {
+		padding: var(--space-2) var(--space-3);
+		background: transparent;
+		border: none;
+		color: var(--color-fg);
+		font: inherit;
+		font-size: 0.9rem;
+		cursor: pointer;
+	}
+	.mode:hover:not(:disabled) {
+		background: rgba(255, 255, 255, 0.05);
+	}
+	.mode.active {
+		background: rgba(201, 138, 255, 0.2);
+		color: var(--color-accent);
+	}
+	.mode:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+	.modehint {
+		font-size: 0.85em;
+		margin-top: var(--space-2);
+	}
+	.builder {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-4);
+		margin: var(--space-3) 0;
+		padding: var(--space-3);
+		background: rgba(255, 255, 255, 0.03);
+		border-radius: 4px;
+	}
+	.channel {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+	.chlabel {
+		font-size: 0.75em;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-muted);
+	}
+	.builder select {
+		padding: var(--space-1) var(--space-2);
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 4px;
+		color: var(--color-fg);
+		font: inherit;
+	}
+	.ychecks {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+	}
+	.ycheck {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		font-size: 0.9em;
+		cursor: pointer;
+	}
+	.joinnote {
+		font-size: 0.85em;
+		margin-bottom: var(--space-2);
 	}
 	.viewbar {
 		display: flex;

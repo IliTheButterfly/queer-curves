@@ -285,9 +285,51 @@ export interface GraphCollection {
 	schema_version: number;
 	owner: UserRef;
 	members: CollectionMember[];
-	// Saved projection applied to the composed graph. Spectrum only — the
-	// network renderer has no view concept in v1.
+	// Saved projection for the *combined* mode — the members composed onto
+	// shared axes, then viewed like any other spectrum graph. Spectrum only;
+	// the network renderer has no view concept in v1.
 	view?: SpectrumView;
+	// Saved projection for the *custom axes* mode. See CollectionView.
+	axis_view?: CollectionView;
+}
+
+// A reference to one specific axis of one specific member of a collection.
+// This is what makes cross-graph plotting possible: a visual channel binds
+// to (which graph, which axis) rather than to an axis index shared by
+// every member. Two graphs that measure "stress" on different axis numbers
+// — or that don't even have the same number of axes — can still be plotted
+// against each other.
+export interface CollectionSeries {
+	// Index into GraphCollection.members.
+	member: number;
+	// Index into that member graph's schema.axes.
+	axis: number;
+}
+
+// A projection over a collection where each visual channel names its own
+// (member, axis) binding. Covers both shapes the same structure:
+//
+//   x: 'time', y: [{m0,stress}, {m1,stress}]
+//     → two people's stress over time, one series each.
+//
+//   x: {m0,stress}, y: [{m0,libido}]
+//     → correlation between two axes of one graph.
+//
+//   x: {m0,stress}, y: [{m1,stress}]
+//     → one person's stress against another's, joined on time.
+//
+// Unlike the combined mode, this imposes no requirement that members share
+// a dimensionality or an axis system — it reads named axes, so a 1D graph
+// and a 3D graph can share a plot.
+export interface CollectionView {
+	id: string;
+	name: string;
+	// The horizontal channel: either the time axis, or a specific axis.
+	x: 'time' | CollectionSeries;
+	// The vertical channel, one entry per plotted series. Several entries
+	// against x='time' overlay multiple histories; a single entry against
+	// an axis binding produces a scatter.
+	y: CollectionSeries[];
 }
 
 export function isCollection(value: { kind?: string }): value is GraphCollection {

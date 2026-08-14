@@ -36,6 +36,7 @@ const {
 	newCollection,
 	resolveCollection,
 	composeCollection,
+	composeAxisView,
 	seriesColor
 } = await import('./collections.js');
 
@@ -224,7 +225,9 @@ describe('resolveCollection / composeCollection', () => {
 		expect(resolved.sources).toHaveLength(1);
 	});
 
-	it('composes nothing when the members are incompatible', async () => {
+	it('treats a dimension mismatch as a warning, not a blocker', async () => {
+		// Combined mode can't draw these, but custom-axes mode can, so the
+		// collection itself must stay creatable and openable.
 		const twoD = spectrum('g_a', 'me', [0.2, 0.3]);
 		const oneD: SpectrumGraph = {
 			...spectrum('g_b', 'other', [0.5]),
@@ -235,6 +238,37 @@ describe('resolveCollection / composeCollection', () => {
 			}
 		};
 		graphOps.getUserGraph.mockImplementation(async (id: string) => (id === 'g_a' ? twoD : oneD));
+		const resolved = await resolveCollection(
+			collection({ members: [{ graph_id: 'g_a' }, { graph_id: 'g_b' }] })
+		);
+		expect(resolved.issues.some((i) => i.level === 'error')).toBe(false);
+		expect(resolved.issues.some((i) => i.code === 'dimension-mismatch')).toBe(true);
+		// Combined mode still declines — it genuinely can't lay these out.
+		expect(composeCollection(resolved)).toBeNull();
+		// …but the custom-axes mode plots them.
+		expect(
+			composeAxisView(resolved, {
+				id: 'v',
+				name: 'x',
+				x: 'time',
+				y: [
+					{ member: 0, axis: 0 },
+					{ member: 1, axis: 0 }
+				]
+			})
+		).not.toBeNull();
+	});
+
+	it('composes nothing when a spectrum and a network graph are mixed', async () => {
+		const spec = spectrum('g_a', 'me', [0.2, 0.3]);
+		const net = {
+			...spectrum('g_b', 'net', [0]),
+			type: 'network' as const,
+			schema: { edge_types: [] },
+			nodes: [],
+			edges: []
+		};
+		graphOps.getUserGraph.mockImplementation(async (id: string) => (id === 'g_a' ? spec : net));
 		const resolved = await resolveCollection(
 			collection({ members: [{ graph_id: 'g_a' }, { graph_id: 'g_b' }] })
 		);

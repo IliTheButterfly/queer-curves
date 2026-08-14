@@ -8,11 +8,13 @@
 // once Matrix is live.
 
 import {
+	type CollectionView,
 	type Graph,
 	type GraphCollection,
 	type SpectrumGraph,
 	SCHEMA_VERSION
 } from '$lib/types.js';
+import { buildCrossPlot } from './crossplot.js';
 import { matrixStore } from '$lib/matrix/store.svelte.js';
 import { findPalette } from '$lib/presets/palettes.js';
 import { allFixtures } from '$lib/fixtures.js';
@@ -207,7 +209,10 @@ export async function resolveCollection(
 		collection,
 		sources,
 		missing,
-		issues: sources.length > 0 ? checkComposable(sources, viewer) : []
+		// Collection-level issues: a dimension mismatch is a warning here,
+		// not an error, because custom-axes mode plots those members fine.
+		// composeCollection re-checks strictly for the combined mode.
+		issues: sources.length > 0 ? checkCollectionMembers(sources, viewer) : []
 	};
 }
 
@@ -218,7 +223,10 @@ export async function resolveCollection(
  */
 export function composeCollection(resolved: ResolvedCollection): Graph | null {
 	if (resolved.sources.length === 0) return null;
-	if (resolved.issues.some((i) => i.level === 'error')) return null;
+	// Strict check, not resolved.issues — combined mode really does need a
+	// shared axis system, even though the collection as a whole tolerates
+	// members that lack one.
+	if (checkComposable(resolved.sources).some((i) => i.level === 'error')) return null;
 	const c = resolved.collection;
 	return composeGraphs(resolved.sources, {
 		id: c.id,
@@ -228,6 +236,46 @@ export function composeCollection(resolved: ResolvedCollection): Graph | null {
 		now: c.modified_at,
 		// The colour *is* the legend in a combined view.
 		colorBySource: true
+	});
+}
+
+/**
+ * Issues that matter when *collecting* graphs, as opposed to merging them.
+ *
+ * A collection has two rendering modes, and they don't agree about what is
+ * fatal. Combined mode lays members onto shared axes and so needs matching
+ * dimensionality; custom-axes mode reads named axes and doesn't care. So a
+ * dimension mismatch is downgraded to a warning that points at the mode
+ * which handles it, rather than blocking the collection outright.
+ */
+export function checkCollectionMembers(sources: ComposeSource[], viewer?: string): ComposeIssue[] {
+	return checkComposable(sources, viewer).map((issue) =>
+		issue.code === 'dimension-mismatch'
+			? {
+					level: 'warning' as const,
+					code: issue.code,
+					message: `${issue.message} Use the "Custom axes" view to plot specific axes of each graph against each other.`
+				}
+			: issue
+	);
+}
+
+/**
+ * The throwaway graph a custom-axes view renders as. Null when the view
+ * references members or axes that no longer exist, which the page reports
+ * rather than silently drawing a partial plot.
+ */
+export function composeAxisView(
+	resolved: ResolvedCollection,
+	view: CollectionView
+): SpectrumGraph | null {
+	if (resolved.sources.length === 0) return null;
+	const c = resolved.collection;
+	return buildCrossPlot(resolved.sources, view, {
+		id: c.id,
+		name: view.name || c.name,
+		owner: c.owner,
+		now: c.modified_at
 	});
 }
 

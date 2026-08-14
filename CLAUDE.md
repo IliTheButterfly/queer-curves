@@ -70,6 +70,13 @@ Read-only mode for non-owners comes from `isOwnGraph()` (room creator vs. curren
 
 `composeGraphs` is pure — id and timestamp are parameters, not `Date.now()` — so it is directly testable. Call `checkComposable` first and surface every issue it returns; the errors block composition and the warnings (axis mismatch, foreign ownership) are what makes the operation honest rather than quietly lossy. Two rules there are load-bearing rather than cosmetic: axis ranges union instead of rescaling coordinates, and network `link_status` takes the _most restrictive_ value so a merge can't manufacture consent.
 
+A collection renders in one of two modes, and they have different compatibility rules:
+
+- **Combined** — `compose.ts` lays members onto _shared_ axes (axis 0 is axis 0 for everyone), so it needs matching dimensionality.
+- **Custom axes** — `crossplot.ts` binds each visual channel to one `(member, axis)` pair, so it reads _named_ axes and doesn't care about dimensionality. This is what makes "my stress vs their stress" and "stress vs libido" expressible.
+
+That split is why there are two checks. `checkComposable` is strict (merges, and combined mode); `checkCollectionMembers` downgrades `dimension-mismatch` to a warning because custom axes handles it. Issues carry a machine-readable `code` — match on that, never on the prose. When both channels are axes, points are paired by **last-observation-carried-forward**, which is an approximation and must keep its caveat text on screen (THREATS.md §10).
+
 `collections.ts` mirrors `graphs.ts` exactly (per-id dispatch, `ensureHydrated()` first, `c_…` migrates to a room on next save), and `collections-matrix.ts` mirrors `graphs-matrix.ts` with its own `app.queercurves.collection.*` event types — distinct types are what keep collections out of `listMatrixGraphs()` and vice versa. Collection rooms deliberately have **no `m.room.name`** (THREATS.md §7 rule 3).
 
 ### Domain model
